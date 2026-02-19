@@ -4,14 +4,17 @@ import { usePlayerStore } from '../store/usePlayerStore';
 export function useWebSocket(guildId: string | undefined) {
   const ws = useRef<WebSocket | null>(null);
   const setPlayerState = usePlayerStore((state) => state.setPlayerState);
+  const wsBaseUrl = import.meta.env.VITE_WS_URL;
 
   useEffect(() => {
     if (!guildId) return;
 
     const connect = () => {
-       // In production, use wss if https
-       const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-       ws.current = new WebSocket(`${protocol}://localhost:8000/ws/${guildId}`);
+       // In production, use VITE_WS_URL (example: wss://api.example.com/ws)
+       const fallbackProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+       const fallbackBase = `${fallbackProtocol}://localhost:8000/ws`;
+       const base = wsBaseUrl || fallbackBase;
+       ws.current = new WebSocket(`${base}/${guildId}`);
 
        ws.current.onopen = () => {
          console.log('WS Connected');

@@ -1,10 +1,21 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import type { AxiosResponse } from 'axios';
 import { api } from '../lib/api';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { usePlayerStore } from '../store/usePlayerStore';
 import { Play, Pause, SkipForward, Volume2, Search } from 'lucide-react';
 import { formatTime } from '../lib/utils';
+
+interface GuildMusicStateResponse {
+  is_playing: boolean;
+  volume: number;
+  queue: string[];
+  title?: string;
+  author?: string;
+  duration?: number;
+  position?: number;
+}
 
 export default function GuildMusic() {
   const { guildId } = useParams();
@@ -17,7 +28,7 @@ export default function GuildMusic() {
   useEffect(() => {
     if (guildId) {
         api.get(`/music/${guildId}`)
-           .then(res => {
+         .then((res: AxiosResponse<GuildMusicStateResponse>) => {
                const data = res.data;
                setPlayerState({
                    isPlaying: data.is_playing,
@@ -25,9 +36,9 @@ export default function GuildMusic() {
                    queue: data.queue,
                    currentTrack: data.title ? {
                        title: data.title,
-                       author: data.author,
-                       duration: data.duration,
-                       position: data.position
+                       author: data.author ?? 'Unknown',
+                       duration: data.duration ?? 0,
+                       position: data.position ?? 0
                    } : null
                });
            })

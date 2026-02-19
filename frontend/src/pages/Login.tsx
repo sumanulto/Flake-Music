@@ -1,4 +1,4 @@
-const REDIRECT_URI = 'http://localhost:5173/auth/callback';
+const REDIRECT_URI = import.meta.env.VITE_DISCORD_REDIRECT_URI || 'http://localhost:5173/auth/callback';
 
 export default function Login() {
   const handleLogin = () => {

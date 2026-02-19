@@ -1,7 +1,19 @@
 import { useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import type { AxiosError, AxiosResponse } from 'axios';
 import { api } from '../lib/api';
 import { useAuthStore } from '../store/useAuthStore';
+
+interface AuthCallbackResponse {
+  access_token: string;
+  token_type: string;
+}
+
+interface MeResponse {
+  id: string;
+  username: string;
+  avatar_url: string;
+}
 
 export default function AuthCallback() {
   const [searchParams] = useSearchParams();
@@ -15,11 +27,11 @@ export default function AuthCallback() {
     if (code && !called.current) {
       called.current = true;
       api.post(`/auth/callback?code=${code}`)
-        .then((res) => {
+        .then((res: AxiosResponse<AuthCallbackResponse>) => {
           setAccessToken(res.data.access_token);
           setAccessToken(res.data.access_token);
           // Fetch user info
-          api.get('/auth/me').then(userRes => {
+          api.get('/auth/me').then((userRes: AxiosResponse<MeResponse>) => {
               // Convert ID to number if needed or ensure store handles string?
               // Store expects number for ID based on previous view.
               // We should probably update store to accept string or cast here if safe (JS precision issue if truly huge?)
@@ -34,7 +46,7 @@ export default function AuthCallback() {
               navigate('/dashboard');
           });
         })
-        .catch((err) => {
+        .catch((err: AxiosError) => {
           console.error("Login failed", err);
           navigate('/');
         });

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import yt_dlp
 
 logger = logging.getLogger(__name__)
@@ -11,12 +12,22 @@ async def extract_info(url: str) -> dict:
     Runs in a separate thread to avoid blocking the event loop.
     """
     def _extract():
+        cookie_file = os.getenv("YTDLP_COOKIE_FILE")
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
             'skip_download': True,
             'extract_flat': 'in_playlist', # fast extraction for playlists
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['web', 'android']
+                }
+            },
         }
+
+        if cookie_file:
+            ydl_opts['cookiefile'] = cookie_file
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             try:
                 info = ydl.extract_info(url, download=False)

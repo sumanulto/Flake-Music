@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 import os
 from sqlalchemy import select
-from backend.database.models.models import AllowedUser
+from backend.database.models.models import AllowedUser, User
 
 # ... (imports)
 
