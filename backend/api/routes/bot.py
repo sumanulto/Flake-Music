@@ -16,6 +16,11 @@ class ControlRequest(BaseModel):
     mode: Optional[str] = None # For repeat
     index: Optional[int] = None # For remove/playNext
 
+
+def _build_lavalink_search_query(title: str, author: Optional[str]) -> str:
+    query = f"{title} {author}" if author else title
+    return f"ytmsearch:{query.strip()}"
+
 @router.get("/status")
 async def get_bot_status():
     # Gather stats
@@ -115,12 +120,14 @@ async def search_tracks(query: str, guildId: str):
              items = tracks
 
         for t in items[:10]: # Limit to 10
+            play_query = _build_lavalink_search_query(t.title, t.author)
             results.append({
                 "title": t.title,
                 "author": t.author,
                 "duration": t.length,
                 "uri": t.uri or t.identifier, # detailed uri or identifier if uri missing
-                "thumbnail": t.artwork or t.preview_url
+                "thumbnail": t.artwork or t.preview_url,
+                "playQuery": play_query
             })
             
         return results
@@ -150,21 +157,18 @@ async def control_player(req: ControlRequest):
             
             # Search and play
             try:
-                # Fallback for YouTube URLs
-                if req.query and ("youtube.com" in req.query or "youtu.be" in req.query):
-                    from backend.utils.youtube import extract_info
-                    info = await extract_info(req.query)
-                    if info:
-                         title = info.get('title')
-                         artist = info.get('artist') or info.get('uploader')
-                         if title:
-                             search_query = f"{title} {artist}" if artist else title
-                             req.query = f"ytmsearch:{search_query}"
-                             logger.info(f"Fallback: Converted URL to search: {req.query}")
+                search_query = req.query.strip()
+                if not search_query:
+                    raise HTTPException(status_code=400, detail="Empty query")
 
-                # If query is a URL, wavelink usually handles it.
-                # However, sometimes it helps to be explicit or handle potential failures.
-                tracks = await wavelink.Playable.search(req.query)
+                has_prefix = search_query.startswith(("ytsearch:", "ytmsearch:", "scsearch:"))
+                is_url = search_query.startswith(("http://", "https://"))
+
+                # Website-side searches should use ytmsearch for reliable Lavalink lookups.
+                if not has_prefix and not is_url:
+                    search_query = f"ytmsearch:{search_query}"
+
+                tracks = await wavelink.Playable.search(search_query)
             except Exception as search_err:
                 # Fallback or specific error handling
                 logger.error(f"Wavelink search failed: {search_err}")

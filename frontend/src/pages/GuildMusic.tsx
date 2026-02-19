@@ -104,7 +104,7 @@ export default function GuildMusic() {
       </div>
 
       {/* Now Playing */}
-      <div className="bg-gradient-to-br from-indigo-900 to-gray-900 p-8 rounded-xl shadow-2xl border border-gray-700">
+      <div className="bg-linear-to-br from-indigo-900 to-gray-900 p-8 rounded-xl shadow-2xl border border-gray-700">
         <div className="flex flex-col md:flex-row items-center gap-8">
            {/* Album Art Placeholder */}
            <div className="w-48 h-48 bg-gray-800 rounded-lg shadow-lg flex items-center justify-center">

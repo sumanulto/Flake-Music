@@ -120,7 +120,7 @@ export default function QueueSection({
               />
             </div>
 
-            <div className="flex-1 overflow-y-auto space-y-2 pr-1 max-h-[450px] custom-scrollbar">
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1 max-h-112.5 custom-scrollbar">
               {isSearching ? (
                  <div className="text-center text-gray-500 mt-4">Searching...</div>
               ) : searchResults.map((track: any, index: number) => (
@@ -128,7 +128,7 @@ export default function QueueSection({
                   key={index}
                   className="relative group flex items-center space-x-3 p-2 hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer"
                   onClick={() => {
-                        controlPlayer("play", { query: track.uri });
+                    controlPlayer("play", { query: track.playQuery || track.uri || `${track.title} ${track.author || ''}`.trim() });
                         // Optional: Clear search or give feedback
                         setQueueActive("Queue");
                   }}
@@ -173,7 +173,7 @@ export default function QueueSection({
                       key={index}
                       className="relative group flex items-center space-x-3 p-2 hover:bg-neutral-800 rounded-lg transition-colors"
                     >
-                      <div className="w-10 h-10 relative rounded overflow-hidden flex-shrink-0">
+                      <div className="w-10 h-10 relative rounded overflow-hidden shrink-0">
                         <img
                           src={thumbnail}
                           alt={track.title}
@@ -190,14 +190,14 @@ export default function QueueSection({
                         </p>
                       </div>
 
-                      <span className="text-xs text-gray-500 flex-shrink-0">
+                      <span className="text-xs text-gray-500 shrink-0">
                         {formatTime(track.duration)}
                       </span>
 
                       {/* 3-dot menu trigger */}
                       <button
                         onClick={(e) => handleMenuClick(e, index)}
-                        className="p-1 hover:bg-neutral-700 rounded-full transition-colors flex-shrink-0"
+                        className="p-1 hover:bg-neutral-700 rounded-full transition-colors shrink-0"
                       >
                         <MoreVertical className="h-4 w-4 text-gray-400" />
                       </button>
