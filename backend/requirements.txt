@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+discord.py
+wavelink
+asyncpg
+sqlalchemy
+python-dotenv
+pydantic
+pydantic-settings
+python-jose[cryptography]
+passlib[bcrypt]
+multipart
+
+yt-dlp

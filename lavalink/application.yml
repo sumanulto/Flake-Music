@@ -1,0 +1,189 @@
+lavalink:
+    plugins:
+        - dependency: com.github.topi314.lavasrc:lavasrc-plugin:4.8.1
+          repository: https://maven.lavalink.dev/releases
+        - dependency: dev.lavalink.youtube:youtube-plugin:1.17.0
+          repository: https://maven.lavalink.dev/releases
+    pluginsDir: ./plugins
+    server:
+        bufferDurationMs: 400
+        filters:
+            channelMix: true
+            distortion: true
+            equalizer: true
+            karaoke: true
+            lowPass: true
+            rotation: true
+            timescale: true
+            tremolo: true
+            vibrato: true
+            volume: true
+        frameBufferDurationMs: 5000
+        gc-warnings: true
+        nonAllocatingFrameBuffer: false
+        opusEncodingQuality: 10
+        password: youshallnotpass
+        playerUpdateInterval: 5
+        resamplingQuality: LOW
+        soundcloudSearchEnabled: true
+        sources:
+            bandcamp: true
+            http: true
+            local: false
+            nico: true
+            soundcloud: true
+            twitch: true
+            vimeo: true
+            youtube: false
+        trackStuckThresholdMs: 10000
+        useSeekGhosting: true
+        youtubePlaylistLoadLimit: 6
+        youtubeSearchEnabled: true
+logging:
+    file:
+        max-history: 5
+        max-size: 10MB
+        path: ./logs/
+    level:
+        com.github.topi314.lavasrc.LavaSrcTools: "OFF"
+        com.sedmelluq.discord.lavaplayer.source.youtube.YoutubePersistentHttpStream: "OFF"
+        com.sedmelluq.discord.lavaplayer.tools.ExceptionTools: "OFF"
+        com.sedmelluq.discord.lavaplayer.tools.io.PersistentHttpStream: "OFF"
+        dev.lavalink.youtube: DEBUG
+        dev.lavalink.youtube.YoutubeAudioSourceManager: "OFF"
+        dev.lavalink.youtube.http.YoutubeOauth2Handler: INFO
+        lavalink: INFO
+        lavalink.server.io.SocketContext: "OFF"
+        root: INFO
+    logback:
+        rollingpolicy:
+            max-file-size: 1GB
+            max-history: 30
+    request:
+        enabled: true
+        includeClientInfo: true
+        includeHeaders: false
+        includePayload: true
+        includeQueryString: true
+        maxPayloadLength: 10000
+metrics:
+    prometheus:
+        enabled: false
+        endpoint: /metrics
+plugins:
+    dunctebot: null
+    jiosaavn: null
+    lavalyrics: null
+    lavasrc:
+        applemusic: null
+        deezer: null
+        flowerytts: null
+        lyrics-sources:
+            deezer: false
+            spotify: true
+            vkmusic: false
+            yandexmusic: false
+            youtube: false
+        providers:
+            - ytsearch:%QUERY%
+            - scsearch:%QUERY%
+            - ytsearch:"%ISRC%"
+        qobuz: null
+        sources:
+            applemusic: false
+            deezer: false
+            flowerytts: false
+            qobuz: false
+            spotify: true
+            tidal: false
+            vkmusic: false
+            yandexmusic: false
+            youtube: false
+            ytdlp: false
+        spotify:
+            albumLoadLimit: 6
+            clientId: bfa0515d8afc4c9a92114c5e98138acc
+            clientSecret: 96e0d7743eb541058c46f41730c70f48
+            countryCode: IN
+            localFiles: false
+            playlistLoadLimit: 6
+            preferAnonymousToken: false
+            resolveArtistsInSearch: true
+        tidal: null
+        vkmusic: null
+        yandexmusic: null
+        youtube: null
+        ytdlp: null
+    youtube:
+        allowDirectPlaylistIds: true
+        allowDirectVideoIds: true
+        allowSearch: true
+        clientOptions:
+            ANDROID_MUSIC:
+                playback: true
+                playlistLoading: false
+                searching: true
+                videoLoading: true
+            ANDROID_VR:
+                playback: true
+                playlistLoading: true
+                searching: true
+                videoLoading: true
+            IOS:
+                playback: true
+                playlistLoading: true
+                searching: true
+                videoLoading: true
+            MUSIC:
+                playback: true
+                playlistLoading: false
+                searching: true
+                videoLoading: false
+            MWEB:
+                playback: true
+                playlistLoading: true
+                searching: true
+                videoLoading: true
+            TV:
+                playback: true
+                playlistLoading: false
+                searching: false
+                videoLoading: false
+            TVHTML5EMBEDDED:
+                playback: true
+                playlistLoading: false
+                searching: true
+                videoLoading: true
+            WEB:
+                playback: true
+                playlistLoading: true
+                searching: true
+                videoLoading: true
+            WEBEMBEDDED:
+                playback: true
+                playlistLoading: false
+                searching: false
+                videoLoading: true
+        clients:
+            - TV
+            - TVHTML5EMBEDDED
+            - WEB
+            - MWEB
+            - WEBEMBEDDED
+            - MUSIC
+            - ANDROID_VR
+            - ANDROID_MUSIC
+            - IOS
+        enabled: true
+        oauth:
+            enabled: true
+        remoteCipher:
+            url: https://cipher.kikkia.dev/api
+sentry:
+    dsn: ""
+    environment: ""
+server:
+    address: 0.0.0.0
+    http2:
+        enabled: false
+    port: 25566

@@ -1,0 +1,123 @@
+@import "tailwindcss";
+
+@layer base {
+    :root {
+        --background: 120 10% 3%;
+        /* Very dark green/black #0b0d0b approx */
+        --foreground: 120 10% 97%;
+
+        --card: 120 10% 4%;
+        --card-foreground: 120 10% 97%;
+
+        --popover: 120 10% 4%;
+        --popover-foreground: 120 10% 97%;
+
+        --primary: 120 100% 25%;
+        /* Green */
+        --primary-foreground: 0 0% 100%;
+
+        --secondary: 120 5% 10%;
+        --secondary-foreground: 120 10% 97%;
+
+        --muted: 120 5% 10%;
+        --muted-foreground: 120 5% 60%;
+
+        --accent: 120 5% 15%;
+        --accent-foreground: 120 10% 97%;
+
+        --destructive: 0 84% 60%;
+        --destructive-foreground: 0 0% 98%;
+
+        --border: 120 5% 15%;
+        --input: 120 5% 15%;
+        --ring: 120 100% 25%;
+
+        --radius: 0.5rem;
+    }
+}
+
+@layer base {
+    * {
+        border-color: hsl(var(--border) / 0.2);
+    }
+
+    body {
+        background-color: hsl(var(--background));
+        color: hsl(var(--foreground));
+    }
+}
+
+/* Custom Utilities and Animations */
+@keyframes bar {
+
+    0%,
+    100% {
+        height: 6px;
+    }
+
+    50% {
+        height: 16px;
+    }
+}
+
+.animate-bar {
+    animation-name: bar;
+    animation-timing-function: ease-in-out;
+    animation-fill-mode: both;
+    transform-origin: bottom;
+    height: 6px;
+}
+
+@keyframes spin-reverse {
+    from {
+        transform: rotate(0deg);
+    }
+
+    to {
+        transform: rotate(-360deg);
+    }
+}
+
+.animate-spin-reverse {
+    animation: spin-reverse 1s linear infinite;
+}
+
+/* Scrollbar */
+/* Scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #09090b; /* Zinc 950/Black */
+}
+
+::-webkit-scrollbar-thumb {
+    background: #15803d; /* Green 700 */
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #16a34a; /* Green 600 */
+}
+
+/* Firefox */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: #15803d #09090b;
+}
+
+/* Slider */
+.vertical-slider {
+    writing-mode: bt-lr;
+    /* IE/Edge */
+    -webkit-appearance: slider-vertical;
+    /* WebKit */
+    appearance: slider-vertical;
+    height: 100px;
+    width: 6px;
+    background: #333;
+    outline: none;
+    border-radius: 4px;
+}

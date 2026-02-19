@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  backend:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: flake_backend
+    volumes:
+      - ./backend:/app
+    environment:
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - LAVALINK_HOST=lavalink
+      - LAVALINK_PORT=2333
+      - LAVALINK_PASSWORD=youshallnotpass
+    depends_on:
+      - postgres
+      - lavalink
+    restart: always
+    ports:
+       - "8000:8000"
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: flake_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-flake}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-flake_password}
+      POSTGRES_DB: ${POSTGRES_DB:-flake_music}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: always
+
+  lavalink:
+    image: ghcr.io/lavalink-devs/lavalink:4
+    container_name: flake_lavalink
+    environment:
+      - _JAVA_OPTIONS=-Xmx512m
+      - SERVER_PORT=2333
+      - LAVALINK_SERVER_PASSWORD=youshallnotpass
+    volumes:
+      - ./lavalink/application.yml:/opt/Lavalin/application.yml
+    ports:
+      - "2333:2333"
+    restart: always
+
+volumes:
+  postgres_data:
