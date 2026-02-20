@@ -121,13 +121,43 @@ class Music(commands.Cog):
              info = await extract_info(query)
              if info:
                  if 'entries' in info: # Playlist
-                      # For now, just play the first one or handle differently?
-                      # Request: "fetch album title and send that to lavalink"
-                      # So if it's a playlist, maybe play the playlist name?
-                      title = info.get('title')
-                      if title:
-                          query = f"ytmsearch:{title}"
-                          await interaction.followup.send(f"Fallback: Searching for playlist **{title}**...", ephemeral=True)
+                      entries = list(info['entries']) # Convert generator if needed
+                      # Limit to avoid blocking/timeouts for now
+                      limit = 100
+                      tracks_to_load = entries[:limit]
+                      
+                      await interaction.followup.send(f"Processing playlist **{info.get('title', 'Unknown')}** ({len(tracks_to_load)} tracks)...", ephemeral=True)
+                      
+                      count = 0
+                      first_track = None
+                      
+                      for entry in tracks_to_load:
+                          t_title = entry.get('title')
+                          t_uploader = entry.get('uploader') or entry.get('artist')
+                          
+                          if t_title:
+                              search_q = f"ytmsearch:{t_title} {t_uploader}" if t_uploader else f"ytmsearch:{t_title}"
+                              try:
+                                  # Individual search
+                                  found_tracks = await wavelink.Playable.search(search_q)
+                                  if found_tracks:
+                                      t = found_tracks[0]
+                                      t.requester = interaction.user.id
+                                      await player.queue.put_wait(t)
+                                      if not first_track:
+                                          first_track = t
+                                      count += 1
+                              except Exception as e:
+                                  logger.warning(f"Failed to load playlist track {t_title}: {e}")
+                                  
+                      if count > 0:
+                          await interaction.followup.send(f"Queued **{count}** tracks from playlist.", ephemeral=True)
+                          if not player.playing:
+                              await player.play(player.queue.get())
+                          return # Stop here, don't do the single track search below
+                      else:
+                           await interaction.followup.send("Failed to load any tracks from playlist.", ephemeral=True)
+                           return
                  else:
                       title = info.get('title')
                       artist = info.get('artist') or info.get('uploader')
