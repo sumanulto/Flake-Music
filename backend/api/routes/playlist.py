@@ -111,9 +111,25 @@ async def add_track(playlist_id: int, track: TrackAdd, db: AsyncSession = Depend
     if not playlist:
         raise HTTPException(status_code=404, detail="Playlist not found")
 
+    # Normalize track data to nested format
+    final_track_data = track.track_data
+    if "info" not in final_track_data:
+        # It's flat format from website, convert to nested
+        final_track_data = {
+            "encoded": None,
+            "info": {
+                "title": track.track_data.get("title"),
+                "author": track.track_data.get("author") or track.track_data.get("artist"),
+                "uri": track.track_data.get("uri"),
+                "length": track.track_data.get("duration") if "duration" in track.track_data else track.track_data.get("length"),
+                "is_stream": track.track_data.get("is_stream", False),
+                "thumbnail": track.track_data.get("thumbnail")
+            }
+        }
+
     new_track = PlaylistTrack(
         playlist_id=playlist_id,
-        track_data=track.track_data,
+        track_data=final_track_data,
         added_at=datetime.utcnow().isoformat()
     )
     db.add(new_track)
@@ -153,9 +169,25 @@ async def like_track(user_id: int, track_data: dict, db: AsyncSession = Depends(
          await db.commit()
          await db.refresh(playlist)
 
+    # Normalize track data to nested format
+    final_track_data = track_data
+    if "info" not in final_track_data:
+        # It's flat format from website, convert to nested
+        final_track_data = {
+            "encoded": None,
+            "info": {
+                "title": track_data.get("title"),
+                "author": track_data.get("author") or track_data.get("artist"),
+                "uri": track_data.get("uri"),
+                "length": track_data.get("duration") if "duration" in track_data else track_data.get("length"),
+                "is_stream": track_data.get("is_stream", False),
+                "thumbnail": track_data.get("thumbnail")
+            }
+        }
+
     # Check if track already exists (duplicate check? based on uri?)
     # track_data should have 'info' or 'uri'
-    uri = track_data.get('info', {}).get('uri') or track_data.get('uri')
+    uri = final_track_data.get('info', {}).get('uri')
     
     # If we want to toggle, we need to check existence.
     # Complex with JSON, but we can iterate or use a specialized query if we extracted URI.
@@ -172,7 +204,8 @@ async def like_track(user_id: int, track_data: dict, db: AsyncSession = Depends(
     
     found_track = None
     for t in playlist.tracks:
-        t_uri = t.track_data.get('info', {}).get('uri') or t.track_data.get('uri')
+        t_info = t.track_data.get('info', t.track_data) # Handle legacy flat data in DB
+        t_uri = t_info.get('uri')
         if t_uri == uri:
             found_track = t
             break
@@ -186,7 +219,7 @@ async def like_track(user_id: int, track_data: dict, db: AsyncSession = Depends(
         # Like
         new_track = PlaylistTrack(
             playlist_id=playlist.id,
-            track_data=track_data,
+            track_data=final_track_data,
             added_at=datetime.utcnow().isoformat()
         )
         db.add(new_track)

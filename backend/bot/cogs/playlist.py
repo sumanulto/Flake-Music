@@ -168,22 +168,17 @@ class PlaylistCog(commands.Cog):
         count = 0
         for i, data in enumerate(tracks_data):
             track = None
-            info = data.get("info", {})
+            # Handle both nested 'info' (old/bot) and flat (new/web) formats
+            info = data.get("info", data) 
             title = info.get("title")
-            author = info.get("author")
+            author = info.get("author") or info.get("artist") # Fallback for flat format which might use artist
 
             uri = info.get("uri")
 
-            # Strategy: Try URI first, then fallback to search
-            if uri:
-                 try:
-                     tracks = await wavelink.Playable.search(uri)
-                     if tracks:
-                         track = tracks[0]
-                 except Exception as e:
-                     logger.warning(f"Track {i}: URI load failed ({uri}): {e}")
-
-            if not track and title:
+            # Strategy: Search Only (Most Reliable per User)
+            # Remove Encoded/URI attempts to fix "URI load failed" and blocking issues.
+            
+            if title:
                 try:
                     query = f"ytmsearch:{title} {author}" if author else f"ytmsearch:{title}"
                     # logger.info(f"Track {i}: Searching: {query}")
@@ -192,8 +187,8 @@ class PlaylistCog(commands.Cog):
                         track = tracks[0]
                 except Exception as e:
                      logger.warning(f"Track {i}: Search load failed: {e}")
-            elif not track:
-                 logger.warning(f"Track {i}: Missing title/uri in data: {data}")
+            else:
+                 logger.warning(f"Track {i}: Missing title in data: {data}")
 
             if track:
                 try:
@@ -258,7 +253,9 @@ class PlaylistCog(commands.Cog):
             # We need to fetch tracks
             await session.refresh(playlist, ["tracks"])
             for t in playlist.tracks:
-                if t.track_data.get("info", {}).get("uri") == track.uri:
+                # Handle both formats for duplicate checking
+                t_info = t.track_data.get("info", t.track_data)
+                if t_info.get("uri") == track.uri:
                      await interaction.response.send_message("Already in Liked Songs!", ephemeral=True)
                      return
 

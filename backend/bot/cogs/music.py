@@ -1,6 +1,7 @@
 import discord
 import wavelink
 import logging
+import os
 from discord import app_commands
 from discord.ext import commands
 from typing import cast, Dict, Optional
@@ -13,6 +14,7 @@ class Music(commands.Cog):
         self.bot = bot
         # Dictionary to store the message ID of the player controller per guild
         self.player_messages: Dict[int, int] = {}
+        self.dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:5173/dashboard")
 
     async def cog_load(self):
         logger.info("Music Cog loaded")
@@ -64,7 +66,7 @@ class Music(commands.Cog):
                 embed.set_thumbnail(url=track.artwork)
 
         # Prepare View
-        view = MusicView(self.bot, player)
+        view = MusicView(self.bot, player, self.dashboard_url)
 
         # Logic to delete old and send new, or edit if last message
         channel = guild.voice_client.channel if guild.voice_client else None
@@ -229,7 +231,7 @@ class Music(commands.Cog):
             embed.description = "Queue is empty. Join a voice channel and play a song!"
             embed.color = discord.Color.dark_grey()
 
-        view = MusicView(self.bot, player)
+        view = MusicView(self.bot, player, self.dashboard_url)
 
         # Helper to send new
         async def send_new():

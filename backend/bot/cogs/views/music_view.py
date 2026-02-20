@@ -2,10 +2,19 @@ import discord
 import wavelink
 
 class MusicView(discord.ui.View):
-    def __init__(self, bot, player: wavelink.Player):
+    def __init__(self, bot, player: wavelink.Player, dashboard_url: str | None = None):
         super().__init__(timeout=None)
         self.bot = bot
         self.player = player
+        if dashboard_url:
+            self.add_item(
+                discord.ui.Button(
+                    label="Dashboard",
+                    style=discord.ButtonStyle.link,
+                    url=dashboard_url,
+                    row=2,
+                )
+            )
         self.update_buttons()
 
     def update_buttons(self):
