@@ -327,6 +327,7 @@ export default function PlayerCard({
             handleRemoveTrack={handleRemoveTrack}
             handlePlayNext={handlePlayNext}
             performSearch={performSearch}
+            selectedGuild={selectedGuild}
           />
         </div>
       </div>

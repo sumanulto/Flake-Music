@@ -7,6 +7,7 @@ from discord.ext import commands
 from typing import cast, Dict, Optional
 from backend.bot.cogs.views.music_view import MusicView
 import asyncio
+from backend.bot import session_queue as sq
 
 logger = logging.getLogger(__name__)
 
@@ -80,17 +81,15 @@ class Music(commands.Cog):
                 if tracks:
                     track = tracks[0]
                     track.requester = user_id
-                    
-                    was_playing = player.playing
-                    
-                    await player.queue.put_wait(track)
+                    session = sq.get(guild_id)
+                    idx = session.add(sq.from_wavelink_track(track))
                     await channel.send(f"Added **{track.title}** to queue from Voice Command.", delete_after=10)
-                    
                     if not player.playing:
-                        await player.play(player.queue.get())
-                        
-                    if was_playing:
-                         await self.refresh_player_interface(guild_id, force_new=False)
+                        session.set_index(idx)
+                        player.queue.clear()
+                        await player.play(track)
+                    else:
+                        await self.refresh_player_interface(guild_id, force_new=False)
                 else:
                     await channel.send("I couldn't find that song.", delete_after=5)
             except Exception as e:
@@ -106,8 +105,14 @@ class Music(commands.Cog):
         elif action in skip_aliases:
              player: wavelink.Player = guild.voice_client
              if player and player.playing:
-                 await player.skip(force=True)
-                 await channel.send("🎙️ **Voice Command:** Skipped track.", delete_after=5)
+                 session = sq.get(guild_id)
+                 next_track = session.advance()
+                 if next_track:
+                     await self._play_session_track(player, next_track)
+                     await channel.send("🎙️ **Voice Command:** Skipped track.", delete_after=5)
+                 else:
+                     await player.stop()
+                     await channel.send("🎙️ **Voice Command:** Queue ended.", delete_after=5)
         elif action in pause_aliases:
              player: wavelink.Player = guild.voice_client
              if player:
@@ -252,9 +257,20 @@ class Music(commands.Cog):
                                   
                       if count > 0:
                           await interaction.followup.send(f"Queued **{count}** tracks from playlist.", ephemeral=True)
-                          if not player.playing:
-                              await player.play(player.queue.get())
-                          return # Stop here, don't do the single track search below
+                          # All tracks are already in player.queue — mirror them into session
+                          session = sq.get(interaction.guild.id)
+                          was_playing = player.playing
+                          for t in list(player.queue):  # snapshot before clearing
+                              session.add(sq.from_wavelink_track(t))
+                          if not was_playing:
+                              first_t = list(player.queue)[0] if player.queue else None
+                              player.queue.clear()
+                              if first_t:
+                                  session.set_index(0)
+                                  await player.play(first_t)
+                          else:
+                              player.queue.clear()  # Lavalink queue no longer needed
+                          return
                       else:
                            await interaction.followup.send("Failed to load any tracks from playlist.", ephemeral=True)
                            return
@@ -282,24 +298,56 @@ class Music(commands.Cog):
         
         if isinstance(tracks, wavelink.Playlist):
             added = await player.queue.put_wait(tracks)
-            track = tracks[0] # Use first track for info
-            # Tag requester
+            track = tracks[0]
             for t in tracks:
                 t.requester = interaction.user.id
+                sq.get(interaction.guild.id).add(sq.from_wavelink_track(t))
             await interaction.followup.send(f"Added playlist **{tracks.name}** ({added} songs).", ephemeral=True)
         else:
             track = tracks[0]
             track.requester = interaction.user.id
-            await player.queue.put_wait(track)
+            session = sq.get(interaction.guild.id)
+            idx = session.add(sq.from_wavelink_track(track))
             await interaction.followup.send(f"Added **{track.title}** to queue.", ephemeral=True)
 
         if not player.playing:
-            await player.play(player.queue.get())
-            # on_track_start will handle the interface creation
+            session = sq.get(interaction.guild.id)
+            if session.current_index < 0:
+                session.set_index(len(session.tracks) - 1)
+            player.queue.clear()
+            await player.play(track)
+            # on_track_start will handle interface creation
 
-        # Only update interface here if we were ALREADY playing (queue update)
+        # Only update interface if we were ALREADY playing (queue update)
         if was_playing:
              await self.refresh_player_interface(interaction.guild.id, force_new=False)
+
+    # ---------------------------------------------------------------------- #
+    # Internal helper: resolve a TrackInfo and play it immediately            #
+    # Lavalink's player.queue is NEVER used for routing — only for playing    #
+    # ---------------------------------------------------------------------- #
+    async def _play_session_track(self, player: wavelink.Player, track_info: sq.TrackInfo):
+        """Load a session track via Lavalink and play it immediately.
+        Sets player._session_navigating = True so on_track_end knows the
+        'replaced' event was intentional and should NOT advance the session.
+        """
+        try:
+            search_q = f"ytmsearch:{track_info.title} {track_info.author}"
+            found = await wavelink.Playable.search(search_q)
+            if not found:
+                logger.warning(f"Session track not found: {track_info.title}")
+                # Skip to next automatically
+                session = sq.get(player.guild.id)
+                next_track = session.advance()
+                if next_track:
+                    await self._play_session_track(player, next_track)
+                return
+            wl_track = found[0]
+            player.queue.clear()           # Lavalink queue stays empty
+            player._session_navigating = True  # Signal: don't auto-advance in on_track_end
+            await player.play(wl_track)
+        except Exception as e:
+            logger.error(f"_play_session_track error: {e}")
 
 
     async def refresh_player_interface(self, guild_id: int, force_new: bool = False):
@@ -349,7 +397,9 @@ class Music(commands.Cog):
             
             embed.add_field(name="Volume", value=f"{player.volume}%", inline=True)
             
-            embed.add_field(name=f"Queue Length", value=f"{len(player.queue)} Tracks", inline=False)
+            session = sq.get(guild_id)
+            remaining = max(0, len(session.tracks) - session.current_index - 1)
+            embed.add_field(name="Queue Length", value=f"{remaining} Tracks", inline=False)
             
             if track.artwork:
                 embed.set_thumbnail(url=track.artwork)
@@ -411,11 +461,17 @@ class Music(commands.Cog):
     @app_commands.command(name="skip", description="Skip song")
     async def skip(self, interaction: discord.Interaction):
         player: wavelink.Player = cast(wavelink.Player, interaction.guild.voice_client)
-        if player and player.playing:
-            await player.skip(force=True)
-            await interaction.response.send_message("Skipped.", ephemeral=True)
-        else:
+        if not player or not player.playing:
             await interaction.response.send_message("Nothing playing.", ephemeral=True)
+            return
+        await interaction.response.send_message("Skipped.", ephemeral=True)
+        session = sq.get(interaction.guild.id)
+        next_track = session.advance()
+        if next_track:
+            await self._play_session_track(player, next_track)
+        else:
+            player.queue.clear()
+            await player.stop()
 
     @app_commands.command(name="pause", description="Pause/Resume")
     async def pause(self, interaction: discord.Interaction):
@@ -431,13 +487,11 @@ class Music(commands.Cog):
         player: wavelink.Player = cast(wavelink.Player, interaction.guild.voice_client)
         if player:
             player.queue.clear()
+            sq.clear(interaction.guild.id)   # clear session
             await player.stop()
             await player.disconnect()
             await interaction.response.send_message("Stopped.", ephemeral=True)
-            # Remove message context
             if interaction.guild.id in self.player_messages:
-                # We might want to clear the player message or show "Disconnected"
-                # For now, let's delete it to be clean
                 try:
                     cid, mid = self.player_messages[interaction.guild.id]
                     ch = self.bot.get_channel(cid)
@@ -514,9 +568,10 @@ class Music(commands.Cog):
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
-        # Helper to cleanup player message when bot disconnects
         if member.id == self.bot.user.id and after.channel is None:
             guild_id = member.guild.id
+            # Clear session queue
+            sq.clear(guild_id)
             if hasattr(self, 'player_messages') and guild_id in self.player_messages:
                 try:
                     cid, mid = self.player_messages[guild_id]
@@ -526,9 +581,8 @@ class Music(commands.Cog):
                         await m.delete()
                 except:
                     pass
-                # Safe delete
                 self.player_messages.pop(guild_id, None)
-                logger.info(f"Cleaned up player message for guild {guild_id} on disconnect")
+                logger.info(f"Cleaned up player message and session for guild {guild_id} on disconnect")
 
     @commands.Cog.listener()
     async def on_wavelink_track_start(self, payload: wavelink.TrackStartEventPayload):
@@ -549,8 +603,10 @@ class Music(commands.Cog):
             "artwork": payload.track.artwork
         })
 
-        # Update UI - New Track = New Message (to keep it at bottom)
-        await self.refresh_player_interface(guild_id, force_new=True)
+        # Only create a new message if one doesn't exist yet;
+        # otherwise edit in-place to avoid spamming the channel on skip/previous.
+        has_existing = bool(self.player_messages.get(guild_id))
+        await self.refresh_player_interface(guild_id, force_new=not has_existing)
 
     @commands.Cog.listener()
     async def on_wavelink_track_end(self, payload: wavelink.TrackEndEventPayload):
@@ -566,9 +622,25 @@ class Music(commands.Cog):
             "track": payload.track.title,
             "reason": payload.reason
         })
-        
-        if player.queue.is_empty and not player.playing:
-             await self.refresh_player_interface(guild_id, force_new=False)
+
+        reason = str(payload.reason).lower()  # normalise e.g. 'TrackEndReason.FINISHED' -> 'finished'
+
+        # If we navigated intentionally (skip/previous/play-index) the 'replaced' event fires.
+        # In that case we already called _play_session_track which set the new index — don't advance.
+        if getattr(player, '_session_navigating', False):
+            player._session_navigating = False
+            return
+
+        # Natural track end — advance session and play next
+        if 'finished' in reason or 'finish' in reason:
+            session = sq.get(guild_id)
+            next_track = session.advance()
+            if next_track:
+                await self._play_session_track(player, next_track)
+            else:
+                # End of queue
+                await self.refresh_player_interface(guild_id, force_new=False)
+        # 'stopped' / 'replaced' without flag = ignore (bot was stopped or external force)
 
     # --- VOICE MODULE TOGGLE ---
     if os.getenv("VOICE_MODULE_ENABLED", "false").lower() == "true":

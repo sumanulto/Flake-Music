@@ -121,3 +121,13 @@
     outline: none;
     border-radius: 4px;
 }
+
+/* Equalizer bars for now-playing indicator */
+@keyframes equalizerA {
+    0%, 100% { transform: scaleY(0.4); }
+    50%       { transform: scaleY(1); }
+}
+@keyframes equalizerB {
+    0%, 100% { transform: scaleY(1); }
+    50%       { transform: scaleY(0.3); }
+}

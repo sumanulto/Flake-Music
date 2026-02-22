@@ -6,6 +6,7 @@ from typing import Optional, List, Any
 import logging
 import httpx
 from pydantic import BaseModel
+from backend.bot import session_queue as sq
 
 router = APIRouter(prefix="/bot", tags=["Bot"])
 logger = logging.getLogger(__name__)
@@ -113,19 +114,25 @@ async def get_players():
                         "thumbnail": t.artwork or None 
                     })
 
+                # Build session-aware queue for the UI (session queue is source of truth)
+                session = sq.get(vc.guild.id)
+                session_data = session.to_api()
+
                 players_data.append({
                     "guildId": str(vc.guild.id),
                     "voiceChannel": vc.channel.name if vc.channel else "Unknown",
-                    "textChannel": "Unknown", # Not easily tracked unless stored on player
+                    "textChannel": "Unknown",
                     "connected": vc.connected,
                     "playing": vc.playing,
                     "paused": vc.paused,
                     "position": vc.position,
                     "volume": vc.volume,
                     "current": current,
-                    "queue": queue_items,
+                    # Return session queue so the frontend always sees the full list
+                    "queue": session_data["tracks"],
+                    "session_current_index": session_data["current_index"],
                     "settings": {
-                        "shuffleEnabled": False, # Shuffle is an action, state hard to track without custom var
+                        "shuffleEnabled": False,
                         "repeatMode": "one" if vc.queue.mode == wavelink.QueueMode.loop else "all" if vc.queue.mode == wavelink.QueueMode.loop_all else "off",
                         "volume": vc.volume
                     }
@@ -134,6 +141,17 @@ async def get_players():
                 logger.error(f"Error processing player for guild {vc.guild.id}: {e}")
                 continue
     return players_data
+
+
+# ---------------------------------------------------------------------------
+# Session queue endpoint
+# ---------------------------------------------------------------------------
+
+@router.get("/session-queue")
+async def get_session_queue(guild_id: str):
+    """Returns the in-memory session queue for a guild."""
+    session = sq.get(int(guild_id))
+    return session.to_api()
 
 @router.get("/search")
 async def search_tracks(query: str, guildId: str):
@@ -184,40 +202,49 @@ async def control_player(req: ControlRequest):
         # Reuse logic from music router or implement direct calls
         if req.action == "play":
             if not req.query:
-                # Just resume if paused?
                 if player.paused:
                     await player.pause(False)
-                return {"success": True}
-            
-            # Search and play
-            try:
-                search_query = req.query.strip()
-                if not search_query:
-                    raise HTTPException(status_code=400, detail="Empty query")
-
-                has_prefix = search_query.startswith(("ytsearch:", "ytmsearch:", "scsearch:"))
-                is_url = search_query.startswith(("http://", "https://"))
-
-                # Website-side searches should use ytmsearch for reliable Lavalink lookups.
-                if not has_prefix and not is_url:
-                    search_query = f"ytmsearch:{search_query}"
-
-                tracks = await wavelink.Playable.search(search_query)
-            except Exception as search_err:
-                # Fallback or specific error handling
-                logger.error(f"Wavelink search failed: {search_err}")
-                raise HTTPException(status_code=400, detail=f"Failed to load track: {str(search_err)}")
-
-            if not tracks:
-                raise HTTPException(status_code=404, detail="No tracks found")
-            
-            if isinstance(tracks, wavelink.Playlist):
-                await player.queue.put_wait(tracks)
             else:
-                await player.queue.put_wait(tracks[0])
-                
-            if not player.playing:
-                await player.play(player.queue.get())
+                try:
+                    search_query = req.query.strip()
+                    if not search_query:
+                        raise HTTPException(status_code=400, detail="Empty query")
+
+                    has_prefix = search_query.startswith(("ytsearch:", "ytmsearch:", "scsearch:"))
+                    is_url = search_query.startswith(("http://", "https://"))
+
+                    if not has_prefix and not is_url:
+                        search_query = f"ytmsearch:{search_query}"
+
+                    tracks = await wavelink.Playable.search(search_query)
+                except Exception as search_err:
+                    logger.error(f"Wavelink search failed: {search_err}")
+                    raise HTTPException(status_code=400, detail=f"Failed to load track: {str(search_err)}")
+
+                if not tracks:
+                    raise HTTPException(status_code=404, detail="No tracks found")
+
+                if isinstance(tracks, wavelink.Playlist):
+                    for t in tracks:
+                        sq.get(guild_id).add(sq.from_wavelink_track(t))
+                    await player.queue.put_wait(tracks)
+                else:
+                    t = tracks[0]
+                    session = sq.get(guild_id)
+                    idx = session.add(sq.from_wavelink_track(t))
+                    if not player.playing:
+                        session.set_index(idx)
+                    await player.queue.put_wait(t)
+
+                if not player.playing:
+                    session2 = sq.get(guild_id)
+                    if session2.current_index < 0 and session2.tracks:
+                        session2.set_index(len(session2.tracks) - 1)
+                    music_cog2 = bot.get_cog("Music")
+                    if music_cog2:
+                        await music_cog2._play_session_track(player, session2.current)
+                    else:
+                        await player.play(player.queue.get())
                 
         elif req.action == "pause":
              await player.pause(True)
@@ -226,7 +253,14 @@ async def control_player(req: ControlRequest):
              await player.pause(False)
              
         elif req.action == "skip":
-             await player.skip(force=True)
+            session = sq.get(guild_id)
+            next_track = session.advance()
+            music_cog = bot.get_cog("Music")
+            if next_track and music_cog:
+                await music_cog._play_session_track(player, next_track)
+            else:
+                player.queue.clear()
+                await player.stop()
              
         elif req.action == "volume":
              if req.query:
@@ -239,23 +273,48 @@ async def control_player(req: ControlRequest):
                  await player.seek(pos)
         
         elif req.action == "remove":
-            if req.index is not None and 0 <= req.index < len(player.queue):
-                del player.queue[req.index]
+            session = sq.get(guild_id)
+            if req.index is not None and 0 <= req.index < len(session.tracks):
+                session.tracks.pop(req.index)
+                # Adjust current_index if needed
+                if req.index < session.current_index:
+                    session.current_index -= 1
+                elif req.index == session.current_index:
+                    # Removed the currently playing track — skip to next
+                    next_track = session.current  # after pop, session.current is new track at same index
+                    music_cog = bot.get_cog("Music")
+                    if next_track and music_cog:
+                        await music_cog._play_session_track(player, next_track)
+                    else:
+                        await player.stop()
 
         elif req.action == "playNext":
-             if req.index is not None and 0 <= req.index < len(player.queue):
-                 track = player.queue[req.index]
-                 del player.queue[req.index]
-                 
-                 # Wavelink 3.x Queue usually helps with put_at, but check type or try/except
-                 if hasattr(player.queue, "put_at"):
-                     player.queue.put_at(0, track)
-                 else:
-                     # Fallback for list-like
-                     player.queue.insert(0, track)
+            session = sq.get(guild_id)
+            if req.index is not None and 0 <= req.index < len(session.tracks):
+                track = session.tracks.pop(req.index)
+                insert_pos = session.current_index + 1
+                session.tracks.insert(insert_pos, track)
+                # Don't change current_index — next natural advance will hit insert_pos
 
-                
-                     player.queue.insert(0, track)
+        elif req.action == "previous":
+            session = sq.get(guild_id)
+            prev_track = session.previous()
+            if not prev_track:
+                raise HTTPException(status_code=400, detail="Already at the beginning")
+            music_cog = bot.get_cog("Music")
+            if music_cog:
+                await music_cog._play_session_track(player, prev_track)
+
+        elif req.action == "play-index":
+            if req.index is None:
+                raise HTTPException(status_code=400, detail="index required")
+            session = sq.get(guild_id)
+            target = session.set_index(req.index)
+            if not target:
+                raise HTTPException(status_code=404, detail="Index out of range")
+            music_cog = bot.get_cog("Music")
+            if music_cog:
+                await music_cog._play_session_track(player, target)
                  
         elif req.action == "shuffle":
              # Shuffle the queue
@@ -414,6 +473,9 @@ async def play_from_web(req: WebPlayRequest):
                 raise HTTPException(status_code=404, detail="Playlist empty or not found")
 
             count = 0
+            session = sq.get(guild.id)
+            first_wl_track = None
+
             for t_db in playlist.tracks:
                 info = t_db.track_data.get("info", t_db.track_data)
                 title = info.get("title")
@@ -424,9 +486,13 @@ async def play_from_web(req: WebPlayRequest):
                 try:
                     found = await wavelink.Playable.search(search_q)
                     if found:
-                        track = found[0]
-                        track.requester = int(req.user_id)  # type: ignore
-                        await player.queue.put_wait(track)
+                        wl_track = found[0]
+                        wl_track.requester = int(req.user_id)
+                        # Add to session queue
+                        sq_track = sq.from_wavelink_track(wl_track)
+                        idx = session.add(sq_track)
+                        if first_wl_track is None:
+                            first_wl_track = (wl_track, idx)
                         count += 1
                 except Exception as e:
                     logger.warning(f"Failed to load track '{title}': {e}")
@@ -434,8 +500,11 @@ async def play_from_web(req: WebPlayRequest):
             if count == 0:
                 raise HTTPException(status_code=500, detail="No tracks could be loaded")
 
-            if not player.playing:
-                await player.play(player.queue.get())
+            if not player.playing and first_wl_track:
+                wl_track, idx = first_wl_track
+                session.set_index(idx)
+                player.queue.clear()
+                await player.play(wl_track)
 
             return {"success": True, "queued": count}
 
@@ -447,12 +516,15 @@ async def play_from_web(req: WebPlayRequest):
             tracks = await wavelink.Playable.search(query)
             if not tracks:
                 raise HTTPException(status_code=404, detail="Track not found")
-            track = tracks[0] if isinstance(tracks, list) else tracks.tracks[0]
-            track.requester = int(req.user_id)  # type: ignore
-            await player.queue.put_wait(track)
+            wl_track = tracks[0] if isinstance(tracks, list) else tracks.tracks[0]
+            wl_track.requester = int(req.user_id)
+            session = sq.get(guild.id)
+            idx = session.add(sq.from_wavelink_track(wl_track))
             if not player.playing:
-                await player.play(player.queue.get())
-            return {"success": True, "track": track.title}
+                session.set_index(idx)
+                player.queue.clear()
+                await player.play(wl_track)
+            return {"success": True, "track": wl_track.title}
 
         raise HTTPException(status_code=400, detail="Must provide playlist_id or track_query")
 
@@ -461,4 +533,5 @@ async def play_from_web(req: WebPlayRequest):
     except Exception as e:
         logger.error(f"play-from-web error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
