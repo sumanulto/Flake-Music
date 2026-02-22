@@ -200,12 +200,26 @@ export default function SettingsView() {
         
         // 2. Open Invite Window
         const clientId = import.meta.env.VITE_DISCORD_CLIENT_ID; // Ensure this is set in .env
+        const listenerClientId = import.meta.env.VITE_DISCORD_LISTENER_CLIENT_ID;
+        
         const permissions = "8"; // Administrator
         const scope = "bot%20applications.commands";
         
         const inviteUrl = `https://discord.com/oauth2/authorize?client_id=${clientId}&permissions=${permissions}&scope=${scope}&guild_id=${guild.id}&disable_guild_select=true`;
         
-        window.open(inviteUrl, "_blank", "width=500,height=800");
+        // Open main bot invite
+        window.open(inviteUrl, "_blank", "width=500,height=800,left=200,top=200");
+        
+        // Open companion bot invite if configured
+        if (listenerClientId && listenerClientId !== "your_listener_client_id_here") {
+             const listenerPerms = "3145728"; // Connect, Speak
+             const listenerScope = "bot";
+             const listenerUrl = `https://discord.com/oauth2/authorize?client_id=${listenerClientId}&permissions=${listenerPerms}&scope=${listenerScope}&guild_id=${guild.id}&disable_guild_select=true`;
+             
+             // Open second window simultaneously to avoid popup blocker on setTimeouts
+             window.open(listenerUrl, "_blank", "width=500,height=800,left=250,top=250");
+        }
+        
         setShowInviteModal(false);
     };
 

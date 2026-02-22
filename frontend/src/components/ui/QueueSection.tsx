@@ -2,6 +2,7 @@ import { Music, MoreVertical } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Player } from "@/types/player";
 import { formatTime } from "@/lib/utils";
+import { proxyThumb } from "@/lib/api";
 
 interface QueueSectionProps {
   currentPlayer: Player;
@@ -133,12 +134,16 @@ export default function QueueSection({
                         setQueueActive("Queue");
                   }}
                 >
-                  <div className="w-14 h-10 relative rounded overflow-hidden flex items-center justify-center">
+                  <div className="w-14 h-10 relative rounded overflow-hidden flex items-center justify-center bg-neutral-800">
                     <img
-                      src={track.thumbnail || "/placeholder.svg"}
+                      src={proxyThumb(track.thumbnail)}
                       alt={track.title}
                       className="object-cover w-full h-full"
+                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; (e.currentTarget.nextSibling as HTMLElement).style.display = 'flex'; }}
                     />
+                    <div style={{display:'none'}} className="absolute inset-0 flex items-center justify-center">
+                      <Music className="h-4 w-4 text-neutral-600" />
+                    </div>
                   </div>
 
                   <div className="flex-1 min-w-0">
@@ -163,22 +168,27 @@ export default function QueueSection({
             {currentPlayer?.queue && currentPlayer.queue.length > 0 ? (
               <div className="space-y-2 overflow-y-auto pr-1 h-full custom-scrollbar pb-40">
                 {currentPlayer.queue.map((track: any, index: number) => {
-                  const thumbnail =
+                  const thumbnail = proxyThumb(
                     track.thumbnail && track.thumbnail.startsWith("http")
                       ? track.thumbnail
-                      : "/placeholder.svg";
+                      : null
+                  );
 
                   return (
                     <div
                       key={index}
                       className="relative group flex items-center space-x-3 p-2 hover:bg-neutral-800 rounded-lg transition-colors"
                     >
-                      <div className="w-10 h-10 relative rounded overflow-hidden shrink-0">
+                      <div className="w-10 h-10 relative rounded overflow-hidden shrink-0 bg-neutral-800">
                         <img
                           src={thumbnail}
                           alt={track.title}
                           className="object-cover w-full h-full"
+                          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; (e.currentTarget.nextSibling as HTMLElement).style.display = 'flex'; }}
                         />
+                        <div style={{display:'none'}} className="absolute inset-0 flex items-center justify-center">
+                          <Music className="h-4 w-4 text-neutral-600" />
+                        </div>
                       </div>
 
                       <div className="flex-1 min-w-0">

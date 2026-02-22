@@ -6,6 +6,7 @@ from sqlalchemy.orm import selectinload
 from backend.database.core.db import async_session_factory
 from backend.database.models.models import Playlist, PlaylistTrack, User
 from backend.utils.youtube import extract_info
+from backend.bot.cogs.views.playlist_manage_view import PlaylistManageView
 import wavelink
 import logging
 import datetime
@@ -223,6 +224,66 @@ class PlaylistCog(commands.Cog):
                  
              desc = "\n".join([f"- **{p.name}** {'(Liked Songs)' if p.is_liked_songs else ''}" for p in playlists])
              await interaction.response.send_message(f"**Your Playlists**:\n{desc}", ephemeral=True)
+
+    # -----------------------------------------------------------------------
+    # /playlist manage
+    # -----------------------------------------------------------------------
+
+    @playlist_group.command(name="manage", description="Open the management panel for one of your playlists")
+    @app_commands.describe(name="The playlist to manage")
+    async def manage(self, interaction: discord.Interaction, name: str):
+        async with async_session_factory() as session:
+            stmt = (
+                select(Playlist)
+                .where(Playlist.user_id == interaction.user.id, Playlist.name == name)
+                .options(selectinload(Playlist.tracks))
+            )
+            playlist = (await session.execute(stmt)).scalar_one_or_none()
+
+        if not playlist:
+            await interaction.response.send_message(
+                f"❌ Playlist **{name}** not found or doesn't belong to you.", ephemeral=True
+            )
+            return
+
+        track_count = len(playlist.tracks) if playlist.tracks else 0
+
+        # Build the management embed
+        embed = discord.Embed(
+            title="🎵 Playlist Settings",
+            description="Personalize and take full control of your playlist\n\nManage your playlist below using the available actions.",
+            color=discord.Color.from_rgb(88, 101, 242),  # Discord blurple
+        )
+        embed.add_field(name="🎵 Playlist", value=playlist.name, inline=False)
+        embed.add_field(name="∑ Total Tracks", value=str(track_count), inline=True)
+        embed.add_field(
+            name="🕒 Last Updated",
+            value=(
+                playlist.tracks[-1].added_at if playlist.tracks and playlist.tracks[-1].added_at
+                else "N/A"
+            ),
+            inline=True,
+        )
+        embed.set_footer(text=f"Playlist owned by {interaction.user.display_name}")
+        embed.set_image(url="https://i.ibb.co/qGpXh5D/image.jpg")  # music banner image
+
+        view = PlaylistManageView(
+            owner_id=interaction.user.id,
+            playlist_name=playlist.name,
+            playlist_id=playlist.id,
+        )
+        await interaction.response.send_message(embed=embed, view=view)
+
+    @manage.autocomplete("name")
+    async def manage_autocomplete(self, interaction: discord.Interaction, current: str):
+        async with async_session_factory() as session:
+            stmt = (
+                select(Playlist.name)
+                .where(Playlist.user_id == interaction.user.id, Playlist.name.ilike(f"%{current}%"))
+                .limit(25)
+            )
+            playlists = (await session.execute(stmt)).scalars().all()
+        return [app_commands.Choice(name=p, value=p) for p in playlists]
 
     @app_commands.command(name="like", description="Add current song to Liked Songs")
     async def like(self, interaction: discord.Interaction):

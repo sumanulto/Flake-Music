@@ -1,4 +1,4 @@
-import { Music2, Server, Settings } from "lucide-react";
+import { Music2, Server, ListMusic } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Player } from "@/types/player";
 
@@ -46,7 +46,7 @@ export default function Sidebar({
           {[
             { label: "Player", icon: <Music2 />, view: "player" },
             { label: "Servers", icon: <Server />, view: "servers" },
-            { label: "Settings", icon: <Settings />, view: "settings" },
+            { label: "Playlists", icon: <ListMusic />, view: "playlists" },
           ].map(({ label, icon, view }) => (
             <button
               key={view}
@@ -132,7 +132,7 @@ export default function Sidebar({
         {[
           { label: "Player", icon: <Music2 size={20} />, view: "player" },
           { label: "Servers", icon: <Server size={20} />, view: "servers" },
-          { label: "Settings", icon: <Settings size={20} />, view: "settings" },
+          { label: "Playlists", icon: <ListMusic size={20} />, view: "playlists" },
         ].map(({ label, icon, view }) => (
           <button
             key={view}

@@ -75,7 +75,15 @@ async def get_user_playlists(user_id: int, db: AsyncSession = Depends(get_db)):
             "id": p.id,
             "name": p.name,
             "is_liked_songs": p.is_liked_songs,
-            "track_count": len(p.tracks)
+            "track_count": len(p.tracks),
+            "tracks": [
+                {
+                    "id": t.id,
+                    "track_data": t.track_data,
+                    "added_at": t.added_at,
+                }
+                for t in p.tracks
+            ],
         }
         for p in playlists
     ]

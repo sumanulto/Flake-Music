@@ -10,5 +10,11 @@ pydantic-settings
 python-jose[cryptography]
 passlib[bcrypt]
 multipart
+httpx
 
 yt-dlp
+
+# Voice module dependencies
+vosk
+discord-ext-voice-recv
+PyNaCl

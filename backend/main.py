@@ -23,6 +23,15 @@ async def lifespan(app: FastAPI):
     logger.info("Starting up FastAPI and Discord Bot...")
     await init_db()
     asyncio.create_task(bot.start(os.getenv("DISCORD_TOKEN")))
+    
+    if os.getenv("VOICE_MODULE_ENABLED", "false").lower() == "true":
+        if bot.listener_bot:
+            listener_token = os.getenv("DISCORD_LISTENER_TOKEN")
+            if listener_token and listener_token != "your_listener_bot_token_here":
+                asyncio.create_task(bot.listener_bot.start(listener_token))
+            else:
+                logger.error("VOICE_MODULE_ENABLED is true, but DISCORD_LISTENER_TOKEN is missing or invalid.")
+                
     yield
     # Shutdown
     logger.info("Shutting down...")

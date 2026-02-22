@@ -6,6 +6,7 @@ from discord import app_commands
 from discord.ext import commands
 from typing import cast, Dict, Optional
 from backend.bot.cogs.views.music_view import MusicView
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,105 @@ class Music(commands.Cog):
         # Dictionary to store the message ID of the player controller per guild
         self.player_messages: Dict[int, int] = {}
         self.dashboard_url = os.getenv("DASHBOARD_URL", "http://localhost:5173/dashboard")
+        
+        # Reference to companion listener bot (set if VOICE_MODULE_ENABLED)
+        self.listener_bot = None
+
+    async def _handle_voice_command(self, guild_id: int, text_channel_id: int, user_id: int, command_text: str):
+        """Callback for the Voice Module when 'Hey Flake ...' is detected"""
+        logger.info(f"Music Cog received voice command from {user_id} in {guild_id}: {command_text}")
+        
+        # Fake a basic /play invocation for now
+        # Command forms: "play [song]", "skip", "pause", "resume", "stop"
+        
+        guild = self.bot.get_guild(guild_id)
+        channel = guild.get_channel(text_channel_id) if guild else None
+        
+        if not guild or not channel:
+            return
+            
+        if not hasattr(self, 'guild_contexts'):
+            self.guild_contexts = {}
+        self.guild_contexts[guild_id] = text_channel_id
+            
+        cmds = command_text.split(" ", 1)
+        action = cmds[0].lower()
+        args = cmds[1] if len(cmds) > 1 else ""
+        
+        # Fuzzy match actions because Vosk mishears often
+        # play -> placebo, bleach, blame, plane, from
+        # pause -> boss, post, poles
+        # skip -> sheep, keep, skiff
+        play_aliases = ["play", "start", "song", "গান", "baja", "placebo", "bleach", "blame", "plane", "from"]
+        stop_aliases = ["stop", "clear", "leave", "স্টপ", "বন্ধ", "stock", "stuff"]
+        skip_aliases = ["skip", "next", "স্কিপ", "পরের", "sheep", "keep", "skiff", "scape"]
+        pause_aliases = ["pause", "resume", "boss", "post", "poles", "bosses", "paws"]
+        
+        if action in play_aliases:
+            if not args:
+                await channel.send("I didn't hear what song you wanted me to play.", delete_after=5)
+                return
+                
+            await channel.send(f"🎙️ **Voice Command:** Playing `{args}`...")
+            
+            # Since we can't easily fake a discord.Interaction for app_commands.command
+            # We must pull the logic out slightly or use the bot's raw message parsing
+            # Easiest way is to connect to wavelink directly here like the play command does
+            try:
+                # Find user voice channel
+                member = guild.get_member(user_id)
+                if not member or not member.voice:
+                    await channel.send("You need to be in a voice channel.")
+                    return
+                
+                player: wavelink.Player = guild.voice_client
+                if not player:
+                    player = await member.voice.channel.connect(cls=wavelink.Player)
+                
+                player.autoplay = wavelink.AutoPlayMode.partial
+                
+                # Assume raw query for now
+                search_query = f"ytsearch:{args}"
+                tracks: wavelink.Search = await wavelink.Playable.search(search_query)
+                
+                if tracks:
+                    track = tracks[0]
+                    track.requester = user_id
+                    
+                    was_playing = player.playing
+                    
+                    await player.queue.put_wait(track)
+                    await channel.send(f"Added **{track.title}** to queue from Voice Command.", delete_after=10)
+                    
+                    if not player.playing:
+                        await player.play(player.queue.get())
+                        
+                    if was_playing:
+                         await self.refresh_player_interface(guild_id, force_new=False)
+                else:
+                    await channel.send("I couldn't find that song.", delete_after=5)
+            except Exception as e:
+                logger.error(f"Voice /play failed: {e}")
+                
+        elif action in stop_aliases:
+            await channel.send("🎙️ **Voice Command:** Stopping music.", delete_after=5)
+            player: wavelink.Player = guild.voice_client
+            if player:
+                player.queue.clear()
+                await player.stop()
+                await player.disconnect()
+        elif action in skip_aliases:
+             player: wavelink.Player = guild.voice_client
+             if player and player.playing:
+                 await player.skip(force=True)
+                 await channel.send("🎙️ **Voice Command:** Skipped track.", delete_after=5)
+        elif action in pause_aliases:
+             player: wavelink.Player = guild.voice_client
+             if player:
+                 await player.pause(not player.paused)
+                 state = "Paused" if player.paused else "Resumed"
+                 await channel.send(f"🎙️ **Voice Command:** {state} track.", delete_after=5)
+                 await self.refresh_player_interface(guild_id, force_new=False)
 
     async def cog_load(self):
         logger.info("Music Cog loaded")
@@ -254,7 +354,7 @@ class Music(commands.Cog):
             if track.artwork:
                 embed.set_thumbnail(url=track.artwork)
             
-            embed.set_footer(text="Designed by Flake Music")
+            embed.set_footer(text="Designed by Kraftamine")
 
         else:
             embed.title = "NOTHING PLAYING"
@@ -469,6 +569,45 @@ class Music(commands.Cog):
         
         if player.queue.is_empty and not player.playing:
              await self.refresh_player_interface(guild_id, force_new=False)
+
+    # --- VOICE MODULE TOGGLE ---
+    if os.getenv("VOICE_MODULE_ENABLED", "false").lower() == "true":
+        @app_commands.command(name="ai", description="Toggle the Voice AI Assistant (Hey Flake)")
+        @app_commands.describe(action="Enable or disable the voice listener")
+        @app_commands.choices(action=[
+            app_commands.Choice(name="Enable Listener", value="enable"),
+            app_commands.Choice(name="Disable Listener", value="disable"),
+        ])
+        async def ai_toggle(self, interaction: discord.Interaction, action: app_commands.Choice[str]):
+            if not getattr(self.bot, "listener_bot", None):
+                await interaction.response.send_message("The AI listener bot is not currently running. Check backend logs.", ephemeral=True)
+                return
+                
+            listener = self.bot.listener_bot
+            
+            if action.value == "enable":
+                if not interaction.user.voice:
+                    await interaction.response.send_message("You must be in a voice channel first.", ephemeral=True)
+                    return
+                    
+                await interaction.response.defer(ephemeral=False)
+                
+                voice_channel_id = interaction.user.voice.channel.id
+                text_channel_id = interaction.channel.id
+                
+                # Ask companion bot to join
+                success = await listener.join_channel(text_channel_id, voice_channel_id)
+                if success:
+                    await interaction.followup.send("✅ Aye aye captain flake is onboard")
+                else:
+                    await interaction.followup.send("❌ AI Listener failed to join. Check server permissions.")
+                    
+            elif action.value == "disable":
+                success = await listener.leave_channel(interaction.guild.id)
+                if success:
+                    await interaction.response.send_message("🛑 adios amigo powering off captain", ephemeral=False)
+                else:
+                    await interaction.response.send_message("AI Listener is not currently in a voice channel here.", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Music(bot))

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import Sidebar from "@/components/ui/Sidebar";
 import PlayerCard from "@/components/ui/PlayerCard";
 import SettingsView from "@/components/views/SettingsView";
+import PlaylistView from "@/components/views/PlaylistView";
 import {
   Square,
   Music,
@@ -20,6 +21,7 @@ import {
   Triangle,
   X,
   LogOut,
+  Settings,
 } from "lucide-react";
 import { Player } from "@/types/player";
 import { api } from "@/lib/api";
@@ -346,10 +348,7 @@ export default function Dashboard() {
               <Menu className="h-5 w-5 text-slate-300" />
             </div>
             <div className="flex items-center space-x-2">
-              <div className="bg-green-600 rounded-full p-1">
-                <Music2 className="h-6 w-6 text-slate-50 p-1 font-bold border-slate-50 border rounded-full" />
-              </div>
-
+              <img src="/logo.gif" alt="Flake Music" className="h-10 w-10 object-contain" />
               <h1 className="text-2xl font-bold">Flake Music</h1>
             </div>
           </div>
@@ -400,6 +399,19 @@ export default function Dashboard() {
                   </div>
                 )}
               </div>
+
+              {/* Settings Button */}
+              <button
+                onClick={() => setActiveView("settings")}
+                className={`p-2 rounded-full transition-colors border ${
+                  activeView === "settings"
+                    ? "bg-neutral-700 border-neutral-600 text-white"
+                    : "bg-neutral-900/50 border-neutral-800 text-gray-400 hover:text-white hover:bg-neutral-800"
+                }`}
+                title="Settings"
+              >
+                <Settings className="h-5 w-5" />
+              </button>
 
               {/* Logout Button */}
               <button
@@ -469,6 +481,12 @@ export default function Dashboard() {
              {activeView === "settings" && (
                  <div className="flex-1 overflow-y-auto">
                     <SettingsView />
+                 </div>
+             )}
+
+             {activeView === "playlists" && (
+                 <div className="flex-1 overflow-hidden">
+                    <PlaylistView selectedGuild={selectedGuild} />
                  </div>
              )}
 

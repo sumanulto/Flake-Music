@@ -20,7 +20,7 @@ import { Player } from "@/types/player";
 import FilterMenu from "./FilterMenu";
 import AddToPlaylistDialog from "./AddToPlaylistDialog";
 import { useAuthStore } from "@/store/useAuthStore";
-import { checkTrackInPlaylists } from "@/lib/api";
+import { checkTrackInPlaylists, proxyThumb } from "@/lib/api";
 
 export interface PlayerCardProps {
   currentPlayer: Player;
@@ -67,6 +67,7 @@ export default function PlayerCard({
 
   const [isAddToPlaylistOpen, setIsAddToPlaylistOpen] = useState(false);
   const [isLiked, setIsLiked] = useState(false);
+  const [thumbError, setThumbError] = useState(false);
   const user = useAuthStore((state) => state.user);
 
   // New state for shuffle mode
@@ -249,7 +250,7 @@ export default function PlayerCard({
       artist: currentPlayer.current.author,
       artwork: [
         {
-          src: currentPlayer.current.thumbnail || "/placeholder.svg",
+          src: proxyThumb(currentPlayer.current.thumbnail) || "/placeholder.svg",
           sizes: "300x300",
           type: "image/png",
         },
@@ -272,6 +273,9 @@ export default function PlayerCard({
       navigator.mediaSession.setActionHandler("nexttrack", null);
     };
   }, [currentPlayer, controlPlayer]);
+
+  // Reset thumb error when track changes
+  useEffect(() => { setThumbError(false); }, [currentPlayer.current?.uri]);
 
   if (!currentPlayer.current || !currentPlayer.connected) {
     return (
@@ -299,11 +303,18 @@ export default function PlayerCard({
     <div className="flex flex-col h-full w-full text-white">
       <div className="flex flex-1 overflow-hidden justify-between">
         <div className="flex items-center w-full justify-center p-4 min-w-[300px]">
-          <img
-            src={currentPlayer.current.thumbnail || "/placeholder.svg"}
-            alt="Album Art"
-            className="rounded-xl shadow-2xl object-cover w-[300px] h-[300px]" 
-          />
+          {thumbError || !currentPlayer.current.thumbnail ? (
+            <div className="w-[300px] h-[300px] rounded-xl shadow-2xl bg-neutral-800 flex items-center justify-center">
+              <Music className="h-24 w-24 text-neutral-600" />
+            </div>
+          ) : (
+            <img
+              src={proxyThumb(currentPlayer.current.thumbnail)}
+              alt="Album Art"
+              className="rounded-xl shadow-2xl object-cover w-[300px] h-[300px]"
+              onError={() => setThumbError(true)}
+            />
+          )}
         </div>
 
         <div className="items-end pr-4">

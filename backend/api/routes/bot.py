@@ -1,12 +1,46 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Response
+from fastapi.responses import StreamingResponse
 from backend.bot.core.bot import bot
 import wavelink
 from typing import Optional, List, Any
 import logging
+import httpx
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/bot", tags=["Bot"])
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Image proxy  –  serves external thumbnails to avoid CORS / hotlink blocks
+# ---------------------------------------------------------------------------
+
+@router.get("/proxy-image")
+async def proxy_image(url: str):
+    """Fetch an external image (e.g. YouTube thumbnail) and return it to the browser."""
+    if not url or not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Invalid URL")
+    try:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+            resp = await client.get(
+                url,
+                headers={
+                    # Mimic a browser request so CDNs don't block us
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+                    "Referer": "https://www.youtube.com/",
+                },
+            )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail="Image fetch failed")
+        content_type = resp.headers.get("content-type", "image/jpeg")
+        return Response(content=resp.content, media_type=content_type)
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Image proxy timeout")
+    except Exception as e:
+        logger.warning(f"proxy-image error for {url}: {e}")
+        raise HTTPException(status_code=502, detail="Failed to proxy image")
+
+
 
 class ControlRequest(BaseModel):
     action: str
@@ -283,3 +317,148 @@ async def control_player(req: ControlRequest):
     except Exception as e:
         logger.error(f"Control error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Voice channel check
+# ---------------------------------------------------------------------------
+
+@router.get("/voice-check")
+async def voice_check(guild_id: str, user_id: str):
+    """Returns whether the given user is currently in a voice channel in the guild."""
+    try:
+        guild = bot.get_guild(int(guild_id))
+        if not guild:
+            raise HTTPException(status_code=404, detail="Guild not found")
+        member = guild.get_member(int(user_id))
+        if not member:
+            raise HTTPException(status_code=404, detail="Member not found in guild")
+        in_voice = member.voice is not None and member.voice.channel is not None
+        channel_name = member.voice.channel.name if in_voice else None
+        return {"in_voice": in_voice, "channel": channel_name}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Voice check error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Play playlist / single track from web
+# ---------------------------------------------------------------------------
+
+class WebPlayRequest(BaseModel):
+    guild_id: str
+    user_id: str
+    playlist_id: Optional[int] = None   # play full playlist
+    track_query: Optional[str] = None   # play single track (ytmsearch:... or URI)
+
+
+@router.post("/play-from-web")
+async def play_from_web(req: WebPlayRequest):
+    """
+    Called by the web UI when the user clicks Play All or a single track.
+    Checks that the user is in a voice channel, then queues the content.
+    Returns 400 with detail='not_in_voice' if the user isn't connected.
+    """
+    try:
+        guild = bot.get_guild(int(req.guild_id))
+        if not guild:
+            raise HTTPException(status_code=404, detail="Guild not found")
+
+        # Voice channel check
+        member = guild.get_member(int(req.user_id))
+        if not member or not member.voice or not member.voice.channel:
+            raise HTTPException(status_code=400, detail="not_in_voice")
+
+        voice_channel = member.voice.channel
+
+        # Connect or reuse player
+        player: wavelink.Player = guild.voice_client  # type: ignore
+        if not player:
+            player = await voice_channel.connect(cls=wavelink.Player)
+        elif player.channel != voice_channel:
+            await player.move_to(voice_channel)
+
+        player.autoplay = wavelink.AutoPlayMode.partial
+
+        # Store context for Music Cog UI refresh
+        music_cog = bot.get_cog("Music")
+        if music_cog:
+            if not hasattr(music_cog, "guild_contexts"):
+                music_cog.guild_contexts = {}
+            # Try to find a text channel to use (fallback to first text channel)
+            text_channel = guild.system_channel or next(
+                (ch for ch in guild.text_channels if ch.permissions_for(guild.me).send_messages),
+                None,
+            )
+            if text_channel:
+                music_cog.guild_contexts[guild.id] = text_channel.id
+
+        # --- Play full playlist ---
+        if req.playlist_id is not None:
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+            from backend.database.core.db import async_session_factory
+            from backend.database.models.models import Playlist as PlaylistModel
+
+            async with async_session_factory() as session:
+                stmt = (
+                    select(PlaylistModel)
+                    .where(PlaylistModel.id == req.playlist_id)
+                    .options(selectinload(PlaylistModel.tracks))
+                )
+                playlist = (await session.execute(stmt)).scalar_one_or_none()
+
+            if not playlist or not playlist.tracks:
+                raise HTTPException(status_code=404, detail="Playlist empty or not found")
+
+            count = 0
+            for t_db in playlist.tracks:
+                info = t_db.track_data.get("info", t_db.track_data)
+                title = info.get("title")
+                author = info.get("author") or info.get("artist")
+                if not title:
+                    continue
+                search_q = f"ytmsearch:{title} {author}" if author else f"ytmsearch:{title}"
+                try:
+                    found = await wavelink.Playable.search(search_q)
+                    if found:
+                        track = found[0]
+                        track.requester = int(req.user_id)  # type: ignore
+                        await player.queue.put_wait(track)
+                        count += 1
+                except Exception as e:
+                    logger.warning(f"Failed to load track '{title}': {e}")
+
+            if count == 0:
+                raise HTTPException(status_code=500, detail="No tracks could be loaded")
+
+            if not player.playing:
+                await player.play(player.queue.get())
+
+            return {"success": True, "queued": count}
+
+        # --- Play single track ---
+        elif req.track_query:
+            query = req.track_query.strip()
+            if not query.startswith(("http://", "https://", "ytsearch:", "ytmsearch:", "scsearch:")):
+                query = f"ytmsearch:{query}"
+            tracks = await wavelink.Playable.search(query)
+            if not tracks:
+                raise HTTPException(status_code=404, detail="Track not found")
+            track = tracks[0] if isinstance(tracks, list) else tracks.tracks[0]
+            track.requester = int(req.user_id)  # type: ignore
+            await player.queue.put_wait(track)
+            if not player.playing:
+                await player.play(player.queue.get())
+            return {"success": True, "track": track.title}
+
+        raise HTTPException(status_code=400, detail="Must provide playlist_id or track_query")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"play-from-web error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
