@@ -50,6 +50,17 @@ npm install
 npm run dev
 ```
 
+## Database Modes
+- `USE_NEON_DB=true` and `USE_MYSQL_DB=true`: backend initializes both DB schemas, then syncs tables/data between NeonDB and MySQL at startup.
+- Only one toggle set to `true`: backend uses only that database and skips dual sync.
+- Both toggles set to `false`: backend startup is blocked and logs a warning.
+
+Environment variables:
+- `DATABASE_URL` (Neon/Postgres URL)
+- `MYSQL_DATABASE_URL` (MySQL async URL, example: `mysql+aiomysql://user:password@localhost:3306/flake_music`)
+- `USE_NEON_DB` (`true`/`false`)
+- `USE_MYSQL_DB` (`true`/`false`)
+
 ## Architecture
 - `backend/`: FastAPI + Discord.py
 - `frontend/`: React + Vite

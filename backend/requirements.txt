@@ -3,6 +3,7 @@ uvicorn
 discord.py
 wavelink
 asyncpg
+aiomysql
 sqlalchemy
 python-dotenv
 pydantic

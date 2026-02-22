@@ -132,8 +132,8 @@ async def get_players():
                     "queue": session_data["tracks"],
                     "session_current_index": session_data["current_index"],
                     "settings": {
-                        "shuffleEnabled": False,
-                        "repeatMode": "one" if vc.queue.mode == wavelink.QueueMode.loop else "all" if vc.queue.mode == wavelink.QueueMode.loop_all else "off",
+                        "shuffleEnabled": session_data.get("shuffle_enabled", False),
+                        "repeatMode": session_data.get("repeat_mode", "off"),
                         "volume": vc.volume
                     }
                 })
@@ -317,28 +317,24 @@ async def control_player(req: ControlRequest):
                 await music_cog._play_session_track(player, target)
                  
         elif req.action == "shuffle":
-             # Shuffle the queue
-             # Wavelink 3.x Queue has simple shuffle method?
-             # Check wavelink docs pattern: typically random.shuffle(player.queue) if it's a list proxy
-             # But wavelink.Queue usually has shuffle() method
-             if hasattr(player.queue, "shuffle"):
-                 player.queue.shuffle()
-             else:
-                 import random
-                 # Fallback if queue is list-like
-                 random.shuffle(player.queue)
-                 
-             # We might want to store shuffle state in metadata if needed for UI "toggle"
-             # But for now, action based is fine.
-             
+            session = sq.get(guild_id)
+            if req.enabled is not None:
+                if req.enabled and not session.shuffle_enabled:
+                    session.shuffle()
+                elif not req.enabled and session.shuffle_enabled:
+                    session.unshuffle()
+            else:
+                # Toggle
+                if session.shuffle_enabled:
+                    session.unshuffle()
+                else:
+                    session.shuffle()
+
         elif req.action == "repeat":
-             if req.mode:
-                 if req.mode == "one":
-                     player.queue.mode = wavelink.QueueMode.loop
-                 elif req.mode == "all":
-                     player.queue.mode = wavelink.QueueMode.loop_all
-                 else:
-                     player.queue.mode = wavelink.QueueMode.normal
+            session = sq.get(guild_id)
+            if req.mode:
+                session.repeat_mode = req.mode  # "off" | "one" | "all"
+            # No longer touch player.queue.mode — we own repeat logic in advance()
  
         elif req.action == "filter":
             if req.mode:
@@ -389,7 +385,11 @@ async def voice_check(guild_id: str, user_id: str):
         guild = bot.get_guild(int(guild_id))
         if not guild:
             raise HTTPException(status_code=404, detail="Guild not found")
-        member = guild.get_member(int(user_id))
+        # fetch_member hits the Discord API for fresh voice state (not cached)
+        try:
+            member = await guild.fetch_member(int(user_id))
+        except Exception:
+            member = guild.get_member(int(user_id))
         if not member:
             raise HTTPException(status_code=404, detail="Member not found in guild")
         in_voice = member.voice is not None and member.voice.channel is not None
@@ -425,8 +425,11 @@ async def play_from_web(req: WebPlayRequest):
         if not guild:
             raise HTTPException(status_code=404, detail="Guild not found")
 
-        # Voice channel check
-        member = guild.get_member(int(req.user_id))
+        # Voice channel check — fetch member fresh to avoid stale cache
+        try:
+            member = await guild.fetch_member(int(req.user_id))
+        except Exception:
+            member = guild.get_member(int(req.user_id))
         if not member or not member.voice or not member.voice.channel:
             raise HTTPException(status_code=400, detail="not_in_voice")
 
