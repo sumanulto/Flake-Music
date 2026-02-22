@@ -237,7 +237,7 @@ export default function Login() {
         <p>
           Powered by{' '}
           <a
-            href="https://suman.kraftamine.com/"
+            href="https://discord.gg/dMHj344eb4"
             target="_blank"
             rel="noopener noreferrer"
             className="text-green-400/70 hover:text-green-300 underline underline-offset-2 transition-colors"
