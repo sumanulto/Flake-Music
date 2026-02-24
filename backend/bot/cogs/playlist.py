@@ -10,6 +10,8 @@ from backend.bot.cogs.views.playlist_manage_view import PlaylistManageView
 import wavelink
 import logging
 import datetime
+import asyncio
+from backend.bot import session_queue as sq
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +46,7 @@ class PlaylistCog(commands.Cog):
             await interaction.response.send_message(f"Created playlist **{name}**.", ephemeral=True)
 
     @playlist_group.command(name="add", description="Add a song to a playlist")
+    @app_commands.describe(name="The playlist to add a song to")
     async def add(self, interaction: discord.Interaction, name: str, query: str):
         # Detect playlist URLs early and reject them with a helpful message
         _q = query.strip()
@@ -126,7 +129,15 @@ class PlaylistCog(commands.Cog):
             
             await interaction.followup.send(f"Added **{track.title}** to **{name}**.")
 
+    @add.autocomplete("name")
+    async def add_autocomplete(self, interaction: discord.Interaction, current: str):
+        async with async_session_factory() as session:
+            stmt = select(Playlist.name).where(Playlist.user_id == interaction.user.id, Playlist.name.ilike(f"%{current}%")).limit(25)
+            playlists = (await session.execute(stmt)).scalars().all()
+        return [app_commands.Choice(name=p, value=p) for p in playlists]
+
     @playlist_group.command(name="play", description="Play a playlist")
+    @app_commands.describe(name="The playlist to play")
     async def play_playlist(self, interaction: discord.Interaction, name: str):
          # Check voice state
         if not interaction.user.voice:
@@ -183,52 +194,86 @@ class PlaylistCog(commands.Cog):
         
         logger.info(f"Collected {len(tracks_data)} tracks.")
 
-        # 2. Process tracks (No DB usage here)
-        count = 0
-        for i, data in enumerate(tracks_data):
-            track = None
-            # Handle both nested 'info' (old/bot) and flat (new/web) formats
-            info = data.get("info", data) 
-            title = info.get("title")
-            author = info.get("author") or info.get("artist") # Fallback for flat format which might use artist
-
-            uri = info.get("uri")
-
-            # Strategy: Search Only (Most Reliable per User)
-            # Remove Encoded/URI attempts to fix "URI load failed" and blocking issues.
+        # Determine current state to start playing as soon as the first track is found
+        was_playing = player.playing
+        queue_was_empty = (len(session.tracks) == 0)
+        start_index = session.current_index
             
-            if title:
-                try:
-                    query = f"ytmsearch:{title} {author}" if author else f"ytmsearch:{title}"
-                    # logger.info(f"Track {i}: Searching: {query}")
-                    tracks = await wavelink.Playable.search(query)
-                    if tracks:
-                        track = tracks[0]
-                except Exception as e:
-                     logger.warning(f"Track {i}: Search load failed: {e}")
-            else:
-                 logger.warning(f"Track {i}: Missing title in data: {data}")
-
-            if track:
-                try:
-                    await player.queue.put_wait(track)
-                    count += 1
-                except Exception as e:
-                    logger.error(f"Track {i}: Failed to queue: {e}")
-            else:
-                logger.error(f"Track {i} failed to load. Data: {data}")
-        
-        logger.info(f"Finished loading. Queued: {count}")
-
-        if count > 0:
-            await interaction.followup.send(f"Queued **{count}** tracks from **{name}**.")
+        # Send initial message to indicate processing
+        await interaction.followup.send(f"Loading **{len(tracks_data)}** tracks from **{name}** in the background! You can keep using commands.", ephemeral=True)
+            
+        async def background_playlist_load(t_data, user_id, guild_id, was_playing, queue_was_empty, start_index):
+            count = 0
+            first_track = None
+            
             try:
-                if not player.playing:
-                    await player.play(player.queue.get())
+                for index, data in enumerate(t_data):
+                    info = data.get("info", data) 
+                    title = info.get("title")
+                    author = info.get("author") or info.get("artist")
+                    
+                    if not title:
+                        continue
+                        
+                    try:
+                        query = f"ytmsearch:{title} {author}" if author else f"ytmsearch:{title}"
+                        tracks = await wavelink.Playable.search(query)
+                        if tracks:
+                            # Wavelink may return playlist or list
+                            track = tracks[0] if isinstance(tracks, list) else tracks.tracks[0]
+                            track.requester = user_id
+                            
+                            sq_track = sq.from_wavelink_track(track)
+                            sq_idx = session.add(sq_track)
+                            
+                            if count == 0 and not was_playing and queue_was_empty:
+                                start_index = sq_idx
+                                first_track = track
+                                
+                                # Start playback immediately on the first found track
+                                session.set_index(start_index)
+                                player.queue.clear()
+                                await player.play(first_track)
+                                
+                            count += 1
+                    except Exception as e:
+                        logger.warning(f"Track {index}: Search load failed: {e}")
+                        
+                    # Yield to event loop nicely after every single track lookup
+                    # This prevents the bot from "hanging" while loading 1000s of tracks
+                    await asyncio.sleep(0.05)
+                    
+                logger.info(f"Finished loading background playlist for guild {guild_id}. Queued: {count}")
+                
+                # Update UI once when complete
+                if count > 0:
+                    music_cog = self.bot.get_cog("Music")
+                    if music_cog:
+                        await music_cog.refresh_player_interface(guild_id, force_new=False)
+
+                    # Send completion message to channel
+                    channel = self.bot.get_channel(interaction.channel_id)
+                    if channel:
+                        await channel.send(f"✅ Finished queuing **{count}** tracks from **{name}** for <@{user_id}>.", delete_after=15)
+                else:
+                    channel = self.bot.get_channel(interaction.channel_id)
+                    if channel:
+                        await channel.send(f"❌ Failed to load any tracks from the playlist **{name}**.", delete_after=10)
+                        
             except Exception as e:
-                logger.error(f"Failed to start playback: {e}")
-        else:
-            await interaction.followup.send("Failed to load any tracks.")
+                logger.error(f"Background playlist load CRASHED for guild {guild_id}: {e}")
+
+        # Fire and forget the background task
+        asyncio.create_task(background_playlist_load(
+            tracks_data, interaction.user.id, interaction.guild.id, was_playing, queue_was_empty, start_index
+        ))
+
+    @play_playlist.autocomplete("name")
+    async def play_playlist_autocomplete(self, interaction: discord.Interaction, current: str):
+        async with async_session_factory() as session:
+            stmt = select(Playlist.name).where(Playlist.user_id == interaction.user.id, Playlist.name.ilike(f"%{current}%")).limit(25)
+            playlists = (await session.execute(stmt)).scalars().all()
+        return [app_commands.Choice(name=p, value=p) for p in playlists]
 
     @playlist_group.command(name="list", description="List your playlists")
     async def list_playlists(self, interaction: discord.Interaction):

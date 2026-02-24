@@ -4,6 +4,7 @@ from backend.bot.core.bot import bot
 import wavelink
 from typing import Optional, List, Any
 import logging
+import asyncio
 import os
 import httpx
 from pydantic import BaseModel
@@ -13,9 +14,8 @@ router = APIRouter(prefix="/bot", tags=["Bot"])
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Image proxy  –  serves external thumbnails to avoid CORS / hotlink blocks
-# ---------------------------------------------------------------------------
+# Global reusable client for the image proxy to prevent SSL context recreation blocking the event loop
+_proxy_client = httpx.AsyncClient(timeout=10, follow_redirects=True)
 
 @router.get("/proxy-image")
 async def proxy_image(url: str):
@@ -23,19 +23,27 @@ async def proxy_image(url: str):
     if not url or not url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="Invalid URL")
     try:
-        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
-            resp = await client.get(
-                url,
-                headers={
-                    # Mimic a browser request so CDNs don't block us
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
-                    "Referer": "https://www.youtube.com/",
-                },
-            )
+        resp = await _proxy_client.get(
+            url,
+            headers={
+                # Mimic a browser request so CDNs don't block us
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+                "Referer": "https://www.youtube.com/",
+            },
+        )
         if resp.status_code != 200:
             raise HTTPException(status_code=resp.status_code, detail="Image fetch failed")
+            
+        # Add basic caching headers so the browser doesn't spam us with repeat requests
         content_type = resp.headers.get("content-type", "image/jpeg")
-        return Response(content=resp.content, media_type=content_type)
+        return Response(
+            content=resp.content, 
+            media_type=content_type,
+            headers={
+                "Cache-Control": "public, max-age=86400", # Cache in browser for 24 hours
+                "Expires": "Wed, 21 Oct 2026 07:28:00 GMT" # Arbitrary future date for aggressive caching
+            }
+        )
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="Image proxy timeout")
     except Exception as e:
@@ -267,15 +275,15 @@ async def control_player(req: ControlRequest):
 
                 if isinstance(tracks, wavelink.Playlist):
                     for t in tracks:
+                        t.requester = int(req.user_id) if hasattr(req, "user_id") else None # Try to set if we can guess, else None
                         sq.get(guild_id).add(sq.from_wavelink_track(t))
-                    await player.queue.put_wait(tracks)
                 else:
                     t = tracks[0]
+                    t.requester = int(req.user_id) if hasattr(req, "user_id") else None
                     session = sq.get(guild_id)
                     idx = session.add(sq.from_wavelink_track(t))
                     if not player.playing:
                         session.set_index(idx)
-                    await player.queue.put_wait(t)
 
                 if not player.playing:
                     session2 = sq.get(guild_id)
@@ -284,8 +292,12 @@ async def control_player(req: ControlRequest):
                     music_cog2 = bot.get_cog("Music")
                     if music_cog2:
                         await music_cog2._play_session_track(player, session2.current)
-                    else:
-                        await player.play(player.queue.get())
+                    elif session2.current:
+                        # Fallback if cog not loaded
+                        search_q = f"ytmsearch:{session2.current.title} {session2.current.author}"
+                        found = await wavelink.Playable.search(search_q)
+                        if found:
+                            await player.play(found[0])
                 
         elif req.action == "pause":
              await player.pause(True)
@@ -518,39 +530,71 @@ async def play_from_web(req: WebPlayRequest):
 
             count = 0
             session = sq.get(guild.id)
-            first_wl_track = None
-
-            for t_db in playlist.tracks:
-                info = t_db.track_data.get("info", t_db.track_data)
-                title = info.get("title")
-                author = info.get("author") or info.get("artist")
-                if not title:
-                    continue
-                search_q = f"ytmsearch:{title} {author}" if author else f"ytmsearch:{title}"
+            
+            was_playing = player.playing
+            queue_was_empty = (len(session.tracks) == 0)
+            start_index = session.current_index
+            
+            async def background_load_playlist(playlist_tracks, user_id, guild_id, was_playing, queue_was_empty, start_index):
+                # Background task to load tracks without blocking the main thread
+                # We yield to the event loop frequently using asyncio.sleep
+                count = 0
+                first_wl_track = None
+                
                 try:
-                    found = await wavelink.Playable.search(search_q)
-                    if found:
-                        wl_track = found[0]
-                        wl_track.requester = int(req.user_id)
-                        # Add to session queue
-                        sq_track = sq.from_wavelink_track(wl_track)
-                        idx = session.add(sq_track)
-                        if first_wl_track is None:
-                            first_wl_track = (wl_track, idx)
-                        count += 1
+                    for i, t_db in enumerate(playlist_tracks):
+                        data = t_db.track_data
+                        info = data.get("info", data)
+                        title = info.get("title")
+                        author = info.get("author") or info.get("artist")
+                        
+                        if not title:
+                            continue
+                            
+                        search_q = f"ytmsearch:{title} {author}" if author else f"ytmsearch:{title}"
+                        try:
+                            found = await wavelink.Playable.search(search_q)
+                            if found:
+                                wl_track = found[0] if isinstance(found, list) else found.tracks[0]
+                                wl_track.requester = int(user_id)
+                                
+                                # Add to session
+                                sq_track = sq.from_wavelink_track(wl_track)
+                                sq_idx = session.add(sq_track)
+                                
+                                # If this is the very first track and we weren't playing, start it immediately
+                                if count == 0 and not was_playing and queue_was_empty:
+                                    first_wl_track = (wl_track, sq_idx)
+                                    start_index = sq_idx
+                                    
+                                    # Start playback
+                                    session.set_index(start_index)
+                                    player.queue.clear()
+                                    music_cog = bot.get_cog("Music")
+                                    if music_cog:
+                                        await music_cog._play_session_track(player, session.current)
+                                    else:
+                                        await player.play(wl_track)
+                                        
+                                count += 1
+                        except Exception as e:
+                            logger.warning(f"Failed to load track '{title}': {e}")
+                            
+                        # Yield to event loop nicely after every single track lookup
+                        # This prevents the bot from "hanging" out waiting for lavalink
+                        await asyncio.sleep(0.05)
+                        
+                    logger.info(f"Background playlist load finished for guild {guild_id}. Queued {count} tracks.")
                 except Exception as e:
-                    logger.warning(f"Failed to load track '{title}': {e}")
+                    logger.error(f"Background playlist load CRASHED for guild {guild_id}: {e}")
 
-            if count == 0:
-                raise HTTPException(status_code=500, detail="No tracks could be loaded")
+            # Fire off the background task instead of waiting for it
+            asyncio.create_task(background_load_playlist(
+                playlist.tracks, req.user_id, guild.id, was_playing, queue_was_empty, start_index
+            ))
 
-            if not player.playing and first_wl_track:
-                wl_track, idx = first_wl_track
-                session.set_index(idx)
-                player.queue.clear()
-                await player.play(wl_track)
-
-            return {"success": True, "queued": count}
+            # Return success immediately to the web UI so it doesn't timeout
+            return {"success": True, "message": f"Loading {len(playlist.tracks)} tracks in the background..."}
 
         # --- Play single track ---
         elif req.track_query:
@@ -567,7 +611,11 @@ async def play_from_web(req: WebPlayRequest):
             if not player.playing:
                 session.set_index(idx)
                 player.queue.clear()
-                await player.play(wl_track)
+                music_cog = bot.get_cog("Music")
+                if music_cog:
+                    await music_cog._play_session_track(player, session.current)
+                else:
+                    await player.play(wl_track)
             return {"success": True, "track": wl_track.title}
 
         raise HTTPException(status_code=400, detail="Must provide playlist_id or track_query")

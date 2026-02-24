@@ -5,6 +5,8 @@ from backend.api.middleware.auth_middleware import get_current_user
 from backend.database.models.models import User
 from backend.bot.core.bot import bot
 from backend.api.schemas.music import PlayRequest, MusicStatus, VolumeRequest, SeekRequest
+from backend.utils.youtube import extract_info
+from backend.bot import session_queue as sq
 from typing import cast
 
 router = APIRouter(prefix="/music", tags=["Music"])
@@ -52,15 +54,36 @@ async def play_music(request: PlayRequest, current_user: User = Depends(get_curr
             raise HTTPException(status_code=404, detail="No tracks found")
         
         if isinstance(tracks, wavelink.Playlist):
-            await player.queue.put_wait(tracks)
+            session = sq.get(request.guild_id)
+            for t in tracks:
+                t.requester = current_user.id
+                session.add(sq.from_wavelink_track(t))
             msg = f"Added playlist {tracks.name}"
         else:
-            track = tracks[0]
-            await player.queue.put_wait(track)
+            track = tracks[0] if isinstance(tracks, list) else tracks.tracks[0]
+            track.requester = current_user.id
+            session = sq.get(request.guild_id)
+            idx = session.add(sq.from_wavelink_track(track))
             msg = f"Added {track.title}"
             
         if not player.playing:
-            await player.play(player.queue.get())
+            session2 = sq.get(request.guild_id)
+            if isinstance(tracks, wavelink.Playlist):
+                # if playlist was added to an empty queue, start from current
+                if session2.current_index < 0 and session2.tracks:
+                    session2.set_index(len(session2.tracks) - len(tracks.tracks))
+            else:
+                session.set_index(idx)
+                
+            music_cog = bot.get_cog("Music")
+            if music_cog:
+                await music_cog._play_session_track(player, session2.current)
+            elif session2.current:
+                search_q = f"ytmsearch:{session2.current.title} {session2.current.author}"
+                found = await wavelink.Playable.search(search_q)
+                if found:
+                    wl_track = found[0] if isinstance(found, list) else found.tracks[0]
+                    await player.play(wl_track)
             
         await update_discord_interface(request.guild_id, force_new=False)
         return {"message": msg}
@@ -123,6 +146,9 @@ async def get_music_status(guild_id: int, current_user: User = Depends(get_curre
         }
     
     current = player.current
+    session = sq.get(guild_id)
+    queue = [t.title for t in session.tracks[session.current_index + 1:]] if session else []
+    
     return {
         "guild_id": guild_id,
         "is_playing": player.playing and not player.paused,
@@ -131,5 +157,5 @@ async def get_music_status(guild_id: int, current_user: User = Depends(get_curre
         "position": player.position,
         "duration": current.length if current else 0,
         "volume": player.volume,
-        "queue": [t.title for t in player.queue]
+        "queue": queue
     }

@@ -9,54 +9,10 @@ from typing import AsyncGenerator
 
 logger = logging.getLogger(__name__)
 
-def _env_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-USE_NEON_DB = _env_bool("USE_NEON_DB", True)
-USE_MYSQL_DB = _env_bool("USE_MYSQL_DB", False)
-
-NEON_DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://flake:flake_password@postgres:5432/flake_music",
-)
-MYSQL_DATABASE_URL = os.getenv(
-    "MYSQL_DATABASE_URL",
-    "mysql+aiomysql://flake:flake_password@localhost:3306/flake_music",
-)
-
-neon_engine = (
-    create_async_engine(
-        NEON_DATABASE_URL,
-        echo=True,
-        # NeonDB serverless closes idle connections after ~5 min.
-        # pool_pre_ping re-tests the connection before use and discards dead ones.
-        pool_pre_ping=True,
-        # Recycle connections every 4 minutes (before NeonDB kills them at 5 min).
-        pool_recycle=240,
-        # Keep the pool small — NeonDB free tier has a concurrent connection limit.
-        pool_size=3,
-        max_overflow=2,
-    )
-    if USE_NEON_DB
-    else None
-)
-mysql_engine = (
-    create_async_engine(
-        MYSQL_DATABASE_URL,
-        echo=True,
-        pool_pre_ping=True,
-        pool_recycle=3600,
-    )
-    if USE_MYSQL_DB
-    else None
-)
-
-primary_engine = neon_engine if neon_engine is not None else mysql_engine
-engine = primary_engine
+neon_engine = None
+mysql_engine = None
+primary_engine = None
+engine = None
 
 runtime_engine = None
 
@@ -145,20 +101,20 @@ async def _delete_rows_not_in_snapshot(
 async def _sync_dual_databases() -> None:
     """Two-phase sync between NeonDB (primary) and MySQL (fallback).
 
-    Phase 1 — MySQL → NeonDB  (additive only):
-        Rows that exist in MySQL but NOT in NeonDB are inserted into NeonDB.
-        These are rows written to MySQL while NeonDB was unavailable.
-        Conflicts (same PK, different data) are resolved in favour of NeonDB.
+    Phase 1 — NeonDB → MySQL  (additive only):
+        Rows that exist in NeonDB but NOT in MySQL are inserted into MySQL.
+        These are rows written to NeonDB while MySQL was unavailable.
+        Conflicts (same PK, different data) are resolved in favour of MySQL.
 
-    Phase 2 — NeonDB → MySQL  (full mirror, including deletes):
-        MySQL is brought to exactly match NeonDB.
-        Rows deleted from NeonDB are deleted from MySQL.
-        Rows updated in NeonDB are updated in MySQL.
+    Phase 2 — MySQL → NeonDB  (full mirror, including deletes):
+        NeonDB is brought to exactly match MySQL.
+        Rows deleted from MySQL are deleted from NeonDB.
+        Rows updated in MySQL are updated in NeonDB.
 
     Net effect:
-        • Outage data survives (MySQL → NeonDB in Phase 1).
-        • NeonDB is the canonical truth for everything else.
-        • Deletes propagate correctly from NeonDB to MySQL.
+        • Outage data survives (NeonDB → MySQL in Phase 1).
+        • MySQL is the canonical truth for everything else.
+        • Deletes propagate correctly from MySQL to NeonDB.
     """
     if neon_engine is None or mysql_engine is None:
         return
@@ -176,27 +132,27 @@ async def _sync_dual_databases() -> None:
                 neon_map = await _fetch_table_map(neon_conn, table, primary_keys)
                 mysql_map = await _fetch_table_map(mysql_conn, table, primary_keys)
 
-                # --- Phase 1: MySQL → NeonDB (outage recovery, additive only) ---
-                mysql_only = {k: v for k, v in mysql_map.items() if k not in neon_map}
+                # --- Phase 1: NeonDB → MySQL (outage recovery, additive only) ---
+                neon_only = {k: v for k, v in neon_map.items() if k not in mysql_map}
                 ph1_inserted = 0
-                for key, row in mysql_only.items():
-                    await neon_conn.execute(table.insert().values(**row))
+                for key, row in neon_only.items():
+                    await mysql_conn.execute(table.insert().values(**row))
                     ph1_inserted += 1
 
-                # Refresh neon_map after Phase 1 inserts so Phase 2 is accurate
+                # Refresh mysql_map after Phase 1 inserts so Phase 2 is accurate
                 if ph1_inserted:
-                    neon_map = await _fetch_table_map(neon_conn, table, primary_keys)
+                    mysql_map = await _fetch_table_map(mysql_conn, table, primary_keys)
 
-                # --- Phase 2: NeonDB → MySQL (full mirror, NeonDB is truth) ---
+                # --- Phase 2: MySQL → NeonDB (full mirror, MySQL is truth) ---
                 ph2_inserted, ph2_updated = await _apply_snapshot(
-                    mysql_conn, table, neon_map, primary_keys
+                    neon_conn, table, mysql_map, primary_keys
                 )
                 ph2_deleted = await _delete_rows_not_in_snapshot(
-                    mysql_conn, table, neon_map, primary_keys
+                    neon_conn, table, mysql_map, primary_keys
                 )
 
                 logger.info(
-                    "Synced table %s | Phase1 NeonDB+%s | Phase2 MySQL +%s ~%s -%s",
+                    "Synced table %s | Phase1 MySQL+%s | Phase2 NeonDB +%s ~%s -%s",
                     table.name,
                     ph1_inserted,
                     ph2_inserted,
@@ -222,6 +178,58 @@ async def _init_schema_for_engine(engine_name: str, db_engine) -> bool:
 
 
 async def init_db():
+    global neon_engine, mysql_engine, primary_engine, engine
+
+    def _env_bool(name: str, default: bool) -> bool:
+        value = os.getenv(name)
+        if value is None:
+            return default
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+
+    USE_NEON_DB = _env_bool("USE_NEON_DB", True)
+    USE_MYSQL_DB = _env_bool("USE_MYSQL_DB", False)
+
+    NEON_DATABASE_URL = os.getenv(
+        "DATABASE_URL",
+        "postgresql+asyncpg://flake:flake_password@postgres:5432/flake_music",
+    )
+    if NEON_DATABASE_URL:
+        if NEON_DATABASE_URL.startswith("postgresql://"):
+            NEON_DATABASE_URL = NEON_DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+        # asyncpg does not support these query parameters
+        NEON_DATABASE_URL = NEON_DATABASE_URL.replace("?sslmode=require&channel_binding=require", "")
+        NEON_DATABASE_URL = NEON_DATABASE_URL.replace("?sslmode=require", "")
+        NEON_DATABASE_URL = NEON_DATABASE_URL.replace("&sslmode=require", "")
+
+    MYSQL_DATABASE_URL = os.getenv(
+        "MYSQL_DATABASE_URL",
+        "mysql+aiomysql://flake:flake_password@localhost:3306/flake_music",
+    )
+
+    if USE_NEON_DB:
+        try:
+            neon_engine = create_async_engine(
+                NEON_DATABASE_URL,
+                echo=True,
+                pool_pre_ping=True,
+                pool_recycle=240,
+                pool_size=3,
+                max_overflow=2,
+            )
+        except Exception as e:
+            logger.error(f"Failed to initialize NeonDB engine: {e}")
+            neon_engine = None
+    if USE_MYSQL_DB:
+        mysql_engine = create_async_engine(
+            MYSQL_DATABASE_URL,
+            echo=True,
+            pool_pre_ping=True,
+            pool_recycle=3600,
+        )
+
+    primary_engine = mysql_engine if mysql_engine is not None else neon_engine
+    engine = primary_engine
+
     if not USE_NEON_DB and not USE_MYSQL_DB:
         logger.warning("Both USE_NEON_DB and USE_MYSQL_DB are false. Bot startup is blocked.")
         raise RuntimeError("No database enabled. Set at least one of USE_NEON_DB or USE_MYSQL_DB to true.")
@@ -232,12 +240,12 @@ async def init_db():
     if USE_NEON_DB and USE_MYSQL_DB and neon_ok and mysql_ok:
         await _sync_dual_databases()
 
-    if neon_ok:
-        _set_runtime_engine(neon_engine)
-        return
-
     if mysql_ok:
         _set_runtime_engine(mysql_engine)
+        return
+        
+    if neon_ok:
+        _set_runtime_engine(neon_engine)
         return
 
     logger.warning("No reachable database found. Startup is blocked.")

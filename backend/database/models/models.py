@@ -6,10 +6,10 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True) # Discord ID
-    username: Mapped[str] = mapped_column(String, nullable=True)
-    avatar_url: Mapped[str] = mapped_column(String, nullable=True)
-    access_token: Mapped[str] = mapped_column(String, nullable=True) # Encrypted ideally
-    refresh_token: Mapped[str] = mapped_column(String, nullable=True)
+    username: Mapped[str] = mapped_column(String(255), nullable=True)
+    avatar_url: Mapped[str] = mapped_column(String(1024), nullable=True)
+    access_token: Mapped[str] = mapped_column(String(1024), nullable=True) # Encrypted ideally
+    refresh_token: Mapped[str] = mapped_column(String(1024), nullable=True)
 
     playlists: Mapped[list["Playlist"]] = relationship(back_populates="user")
 
@@ -17,8 +17,8 @@ class Guild(Base):
     __tablename__ = "guilds"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True) # Discord Guild ID
-    name: Mapped[str] = mapped_column(String, nullable=True)
-    icon_url: Mapped[str] = mapped_column(String, nullable=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=True)
+    icon_url: Mapped[str] = mapped_column(String(1024), nullable=True)
     settings: Mapped[dict] = mapped_column(JSON, default={})
     premium: Mapped[bool] = mapped_column(Boolean, default=False)
     
@@ -28,7 +28,7 @@ class Playlist(Base):
     __tablename__ = "playlists"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String)
+    name: Mapped[str] = mapped_column(String(255))
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     guild_id: Mapped[int] = mapped_column(BigInteger, nullable=True) # Optional: Playlist specific to a guild?
 
@@ -43,7 +43,7 @@ class PlaylistTrack(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     playlist_id: Mapped[int] = mapped_column(ForeignKey("playlists.id"))
     track_data: Mapped[dict] = mapped_column(JSON) # Stores the encoded track or metadata
-    added_at: Mapped[str] = mapped_column(String, nullable=True) # ISO Timestamp
+    added_at: Mapped[str] = mapped_column(String(255), nullable=True) # ISO Timestamp
     
     playlist: Mapped["Playlist"] = relationship(back_populates="tracks")
 
@@ -53,13 +53,13 @@ class AllowedUser(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     discord_id: Mapped[int] = mapped_column(BigInteger, unique=True)
-    username: Mapped[str] = mapped_column(String, nullable=True) # Optional, just for display
-    added_at: Mapped[str] = mapped_column(String, nullable=True) # Simple timestamp string or DateTime
+    username: Mapped[str] = mapped_column(String(255), nullable=True) # Optional, just for display
+    added_at: Mapped[str] = mapped_column(String(255), nullable=True) # Simple timestamp string or DateTime
 
 class AllowedGuild(Base):
     __tablename__ = "allowed_guilds"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     guild_id: Mapped[int] = mapped_column(BigInteger, unique=True)
-    name: Mapped[str] = mapped_column(String, nullable=True) # Optional, just for display
-    added_at: Mapped[str] = mapped_column(String, nullable=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=True) # Optional, just for display
+    added_at: Mapped[str] = mapped_column(String(255), nullable=True)
