@@ -4,11 +4,9 @@ import PlayerCard from "@/components/ui/PlayerCard";
 import SettingsView from "@/components/views/SettingsView";
 import PlaylistView from "@/components/views/PlaylistView";
 import {
-  Square,
   Music,
   Server,
   AlertCircle,
-  Power,
   RotateCcw,
   Menu,
   Music2,
@@ -88,9 +86,6 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
   const [activeView, setActiveView] = useState("player");
-  // const [startingBot, setStartingBot] = useState(false); // Unused
-  // const [restartingBot, setRestartingBot] = useState(false); // Unused
-  const startingBot = false;
   const restartingBot = false;
   const [volume, setVolume] = useState(100);
 
@@ -112,6 +107,7 @@ export default function Dashboard() {
       }
     }, 1000);
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSeekingTimeline]);
 
   const fetchBotStatus = async () => {
@@ -183,23 +179,6 @@ export default function Dashboard() {
     }
   };
 
-  const startBot = async () => {
-    // Current backend doesn't support start/stop via API yet, purely for status
-    // Implementing placeholders or if route exists
-    // api.post("/bot/start") ...
-    alert("Start bot functionality not implemented in backend yet.");
-  };
-
-  const stopBot = async () => {
-      // api.post("/bot/stop") ...
-      alert("Stop bot functionality not implemented in backend yet.");
-  };
-
-  const restartBot = async () => {
-      // api.post("/bot/restart") ...
-      alert("Restart bot functionality not implemented in backend yet.");
-  };
-
   const controlPlayer = async (action: string, options: { query?: string, index?: number, enabled?: boolean, mode?: string } = {}) => {
     if (!selectedGuild) return;
 
@@ -267,36 +246,6 @@ export default function Dashboard() {
     return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
   };
 
-  const getServerName = (guildId: string) => {
-    // Placeholder - ideally backend sends guild name in player object
-    // or we fetch from /guilds
-    // For now, finding from players list or generic
-    const p = players.find(x => x.guildId === guildId);
-    if(p) return p.voiceChannel; // Using voice channel name as proxy or add guildName field to backend
-    return `Server ${guildId.slice(-4)}`;
-  };
-
-  const controlButtons = [
-    {
-      label: startingBot ? "Starting..." : "Start",
-      icon: <Power className="h-4 w-4" />,
-      onClick: startBot,
-      disabled: startingBot || botStatus?.botOnline,
-    },
-    {
-      label: restartingBot ? "Restarting..." : "Restart",
-      icon: <RotateCcw className="h-4 w-4" />,
-      onClick: restartBot,
-      disabled: restartingBot || !botStatus?.botOnline,
-    },
-    {
-      label: "Stop",
-      icon: <Square className="h-4 w-4" />,
-      onClick: stopBot,
-      disabled: !botStatus?.botOnline,
-    },
-  ];
-
   const stats = [
     {
       label: "Servers",
@@ -330,6 +279,10 @@ export default function Dashboard() {
 
   const currentPlayer = players.find((p) => p.guildId === selectedGuild);
 
+  useEffect(() => {
+    if (showTerminalDialog) fetchTerminalOutput();
+  }, [showTerminalDialog]);
+
   const fetchTerminalOutput = async () => {
     setLoadingTerminal(true);
     try {
@@ -352,11 +305,6 @@ export default function Dashboard() {
     } else {
       return <BadgeX className="h-3.5 w-3.5 text-red-500" />;
     }
-  };
-
-  const openTerminalDialog = () => {
-    setShowTerminalDialog(true);
-    fetchTerminalOutput();
   };
 
   if (!botStatus) {
@@ -508,8 +456,6 @@ export default function Dashboard() {
           players={players}
           selectedGuild={selectedGuild}
           setSelectedGuild={setSelectedGuild}
-          getServerName={getServerName}
-          botStatus={botStatus}
           stats={stats}
           onLogout={handleLogout}
         />
@@ -526,7 +472,7 @@ export default function Dashboard() {
 
           {activeView === "player" && (
                  <div className="flex-1 overflow-hidden p-6 relative">
-                    <div className="absolute inset-0 bg-gradient-to-b from-green-900/10 to-transparent pointer-events-none" />
+                    <div className="absolute inset-0 bg-linear-to-b from-green-900/10 to-transparent pointer-events-none" />
 
                     {players.find((p) => p.guildId === selectedGuild) ? (
                       // ── Voice-channel guard ──────────────────────────────
@@ -711,7 +657,7 @@ export default function Dashboard() {
                         <X size={20} />
                     </button>
                 </div>
-                <div className="p-4 bg-black overflow-auto h-[300px] font-mono text-xs text-green-400 whitespace-pre-wrap">
+                <div className="p-4 bg-black overflow-auto h-75 font-mono text-xs text-green-400 whitespace-pre-wrap">
                     {loadingTerminal ? "Loading..." : terminalOutput}
                 </div>
             </div>

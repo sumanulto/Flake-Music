@@ -101,7 +101,7 @@ interface ToastMsg { id: number; type: ToastType; message: string }
 
 function Toast({ toasts, remove }: { toasts: ToastMsg[]; remove: (id: number) => void }) {
   return (
-    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] flex flex-col gap-2 items-center pointer-events-none">
+    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-100 flex flex-col gap-2 items-center pointer-events-none">
       {toasts.map((t) => {
         const colors =
           t.type === "warning"
@@ -201,8 +201,8 @@ function CreatePlaylistModal({
       await createPlaylist(trimmed, userId);
       onCreated();
       onClose();
-    } catch (e: any) {
-      setError(e?.response?.data?.detail || "Failed to create playlist");
+    } catch (e) {
+      setError((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Failed to create playlist");
     } finally {
       setLoading(false);
     }
@@ -331,8 +331,8 @@ function ImportPlaylistModal({
           }
         }
       }
-    } catch (e: any) {
-      setError(e.message || "Import failed. Please try again.");
+    } catch (e) {
+      setError((e as { message?: string })?.message || "Import failed. Please try again.");
       setImportStatus("error");
     }
   };
@@ -403,7 +403,7 @@ function ImportPlaylistModal({
                   <span className="truncate max-w-[75%]">
                     {progress.trackTitle || "Processing…"}
                   </span>
-                  <span className="flex-shrink-0 ml-2">
+                  <span className="shrink-0 ml-2">
                     {progress.current} / {progress.total}
                   </span>
                 </div>
@@ -447,7 +447,7 @@ function ImportPlaylistModal({
           <div className="text-center py-4">
             <AlertTriangle size={44} className="text-red-400 mx-auto mb-3" />
             <p className="text-white font-semibold">Import Failed</p>
-            <p className="text-sm text-gray-400 mt-1 break-words">{error}</p>
+            <p className="text-sm text-gray-400 mt-1 wrap-break-word">{error}</p>
             <div className="flex gap-3 mt-5">
               <button
                 onClick={() => setImportStatus("idle")}
@@ -492,7 +492,7 @@ function TrackRow({
   return (
     <div className="group flex items-center gap-4 px-4 py-2.5 rounded-lg hover:bg-neutral-800/60 transition-colors">
       {/* Index / Play */}
-      <div className="w-6 text-center flex-shrink-0">
+      <div className="w-6 text-center shrink-0">
         <span className="text-sm text-gray-500 group-hover:hidden">{index}</span>
         <button onClick={onPlay} className="hidden group-hover:block">
           <Play size={14} className="text-green-400" />
@@ -500,7 +500,7 @@ function TrackRow({
       </div>
 
       {/* Music icon */}
-      <div className="w-9 h-9 rounded-md bg-neutral-700 flex items-center justify-center flex-shrink-0">
+      <div className="w-9 h-9 rounded-md bg-neutral-700 flex items-center justify-center shrink-0">
         <Music2 size={16} className="text-green-400" />
       </div>
 
@@ -511,13 +511,13 @@ function TrackRow({
       </div>
 
       {/* Duration */}
-      <div className="flex items-center gap-1 text-xs text-gray-400 flex-shrink-0">
+      <div className="flex items-center gap-1 text-xs text-gray-400 shrink-0">
         <Clock size={12} />
         {formatDuration(length)}
       </div>
 
       {/* Context menu */}
-      <div className="relative flex-shrink-0">
+      <div className="relative shrink-0">
         <button
           onClick={() => setMenuOpen((v) => !v)}
           className="text-gray-500 hover:text-white p-1 rounded opacity-0 group-hover:opacity-100 transition"
@@ -605,8 +605,8 @@ function PlaylistDetail({
       if (trackQuery) payload.track_query = trackQuery;
       await api.post("/bot/play-from-web", payload);
       addToast("success", playlistId ? `▶ Playing playlist "${playlist.name}"` : "▶ Track added to queue");
-    } catch (err: any) {
-      const detail = err?.response?.data?.detail;
+    } catch (err) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       if (detail === "not_in_voice") {
         addToast("warning", "⚠️ You have not joined any voice channel. Join a channel in Discord first!");
       } else {
@@ -674,7 +674,7 @@ function PlaylistDetail({
         />
       )}
       {/* Header */}
-      <div className="flex-shrink-0 px-6 pt-6 pb-4">
+      <div className="shrink-0 px-6 pt-6 pb-4">
         <button
           onClick={onBack}
           className="text-sm text-gray-400 hover:text-white mb-4 flex items-center gap-1 transition"
@@ -684,7 +684,7 @@ function PlaylistDetail({
 
         <div className="flex items-start gap-5">
           {/* Cover art */}
-          <div className="w-36 h-36 rounded-xl bg-gradient-to-br from-green-700 to-emerald-900 flex items-center justify-center shadow-2xl flex-shrink-0">
+          <div className="w-36 h-36 rounded-xl bg-linear-to-br from-green-700 to-emerald-900 flex items-center justify-center shadow-2xl shrink-0">
             <ListMusic size={56} className="text-white/60" />
           </div>
 
@@ -735,7 +735,7 @@ function PlaylistDetail({
       </div>
 
       {/* Track list header */}
-      <div className="flex items-center gap-4 px-6 py-2 text-xs font-semibold uppercase tracking-wider text-gray-500 border-b border-neutral-800 flex-shrink-0">
+      <div className="flex items-center gap-4 px-6 py-2 text-xs font-semibold uppercase tracking-wider text-gray-500 border-b border-neutral-800 shrink-0">
         <span className="w-6 text-center">#</span>
         <span className="w-9" />
         <span className="flex-1">Title</span>
@@ -825,7 +825,7 @@ function PlaylistCard({
       className="group text-left bg-neutral-900/50 hover:bg-neutral-800 border border-neutral-800 hover:border-neutral-700 rounded-xl p-4 transition-all duration-200"
     >
       <div
-        className={`w-full aspect-square rounded-lg bg-gradient-to-br ${gradient} flex items-center justify-center mb-3 shadow-lg group-hover:shadow-xl transition-shadow`}
+        className={`w-full aspect-square rounded-lg bg-linear-to-br ${gradient} flex items-center justify-center mb-3 shadow-lg group-hover:shadow-xl transition-shadow`}
       >
         <ListMusic size={36} className="text-white/60" />
       </div>
@@ -885,6 +885,7 @@ export default function PlaylistView({ selectedGuild = "" }: { selectedGuild?: s
 
   useEffect(() => {
     fetchPlaylists();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
   const handleDeletePlaylist = (id: number) => {
@@ -908,7 +909,7 @@ export default function PlaylistView({ selectedGuild = "" }: { selectedGuild?: s
   // Playlist detail view
   if (selectedPlaylist) {
     return (
-      <div className="h-full bg-gradient-to-b from-neutral-900 to-[#030202] relative">
+      <div className="h-full bg-linear-to-b from-neutral-900 to-[#030202] relative">
         <Toast toasts={toasts} remove={removeToast} />
         <PlaylistDetail
           playlist={selectedPlaylist}
@@ -943,7 +944,7 @@ export default function PlaylistView({ selectedGuild = "" }: { selectedGuild?: s
       )}
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-6 flex-shrink-0">
+      <div className="flex items-center justify-between mb-6 shrink-0">
         <div>
           <h1 className="text-3xl font-black text-white">Your Library</h1>
           <p className="text-sm text-gray-400 mt-1">{playlists.length} playlist{playlists.length !== 1 ? "s" : ""}</p>
@@ -968,7 +969,7 @@ export default function PlaylistView({ selectedGuild = "" }: { selectedGuild?: s
 
       {/* Search */}
       {playlists.length > 0 && (
-        <div className="relative mb-5 flex-shrink-0">
+        <div className="relative mb-5 shrink-0">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
           <input
             value={searchQuery}

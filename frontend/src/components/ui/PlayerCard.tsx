@@ -35,7 +35,7 @@ export interface PlayerCardProps {
   setIsSeekingTimeline: (seeking: boolean) => void;
   selectedGuild: string;
   isSeekingTimeline: boolean;
-  performSearch: (query: string) => Promise<any[]>;
+  performSearch: (query: string) => Promise<Record<string, unknown>[]>;
 }
 
 export default function PlayerCard({
@@ -76,8 +76,8 @@ export default function PlayerCard({
   // --- Volume sync state ---
   const [localVolume, setLocalVolume] = useState<number | undefined>(undefined);
 
-  const localProgressInterval = useRef<any>(null); // Use any to avoid NodeJS error
-  const hideVolumeSliderTimeout = useRef<any>(null); 
+  const localProgressInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const hideVolumeSliderTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastUpdateTime = useRef<number | null>(null);
 
   // Only update local volume from backend when currentPlayer changes
@@ -94,7 +94,7 @@ export default function PlayerCard({
   }, [currentPlayer.settings, currentPlayer.volume]);
 
   // Debounced volume update
-  const volumeUpdateTimeout = useRef<any>(null);
+  const volumeUpdateTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleVolumeChange = (newVolume: number) => {
     setLocalVolume(newVolume);
@@ -223,7 +223,7 @@ export default function PlayerCard({
         if (currentPlayer.current && user) {
              try {
                 // Handle different track object structures if necessary
-                 const uri = currentPlayer.current.uri || (currentPlayer.current as any).info?.uri;
+                 const uri = currentPlayer.current.uri || (currentPlayer.current as { info?: { uri?: string } }).info?.uri;
                  if (uri) {
                     const playlists = await checkTrackInPlaylists(user.id, uri);
                     setIsLiked(playlists.length > 0);
@@ -237,6 +237,7 @@ export default function PlayerCard({
     };
 
     checkLike();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPlayer.current?.uri, user?.id, isAddToPlaylistOpen]);
 
 
@@ -302,16 +303,16 @@ export default function PlayerCard({
   return (
     <div className="flex flex-col h-full w-full text-white">
       <div className="flex flex-1 overflow-hidden justify-between">
-        <div className="flex items-center w-full justify-center p-4 min-w-[300px]">
+        <div className="flex items-center w-full justify-center p-4 min-w-75">
           {thumbError || !currentPlayer.current.thumbnail ? (
-            <div className="w-[300px] h-[300px] rounded-xl shadow-2xl bg-neutral-800 flex items-center justify-center">
+            <div className="w-75 h-75 rounded-xl shadow-2xl bg-neutral-800 flex items-center justify-center">
               <Music className="h-24 w-24 text-neutral-600" />
             </div>
           ) : (
             <img
               src={proxyThumb(currentPlayer.current.thumbnail)}
               alt="Album Art"
-              className="rounded-xl shadow-2xl object-cover w-[300px] h-[300px]"
+              className="rounded-xl shadow-2xl object-cover w-75 h-75"
               onError={() => setThumbError(true)}
             />
           )}

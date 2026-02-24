@@ -16,7 +16,6 @@ interface SidebarProps {
   players: Player[];
   selectedGuild: string;
   setSelectedGuild: (guildId: string) => void;
-  botStatus: any;
   stats: Stat[];
   onLogout: () => void;
 }
@@ -169,7 +168,7 @@ export default function Sidebar({
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2 min-w-0">
-                  <Server className="h-4 w-4 flex-shrink-0" />
+                  <Server className="h-4 w-4 shrink-0" />
                   <div className="flex flex-col min-w-0">
                     <span className="text-sm font-medium truncate">
                       {player.guildName || `Server ${player.guildId.slice(-4)}`}
@@ -180,7 +179,7 @@ export default function Sidebar({
                   </div>
                 </div>
                 {player.playing && (
-                  <div className="flex space-x-1 h-4 items-end flex-shrink-0">
+                  <div className="flex space-x-1 h-4 items-end shrink-0">
                     {[0, 0.2, 0.4].map((delay, i) => (
                       <div
                         key={i}
