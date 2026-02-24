@@ -4,6 +4,7 @@ from backend.bot.core.bot import bot
 import wavelink
 from typing import Optional, List, Any
 import logging
+import os
 import httpx
 from pydantic import BaseModel
 from backend.bot import session_queue as sq
@@ -58,31 +59,70 @@ def _build_lavalink_search_query(title: str, author: Optional[str]) -> str:
 
 @router.get("/status")
 async def get_bot_status():
-    # Gather stats
+    """Return bot status + system resource usage for the dashboard debug panel."""
     try:
+        import psutil, discord as _discord
+
+        # ── System Info ──────────────────────────────────────────────────────
+        cpu_pct = psutil.cpu_percent(interval=None)
+        vm = psutil.virtual_memory()
+        du = psutil.disk_usage("/")
+
+        # ── Lavalink Nodes ───────────────────────────────────────────────────
+        bot_version = os.getenv("BOT_VERSION") or f"v{_discord.__version__}"
+        api_url     = os.getenv("VITE_API_URL", "")
         nodes = []
         if hasattr(wavelink.Pool, "nodes"):
-             for node in wavelink.Pool.nodes.values():
-                 nodes.append({
-                     "identifier": node.identifier,
-                     "connected": node.status == wavelink.NodeStatus.CONNECTED,
-                     "stats": {
-                         "players": len(node.players),
-                         "memory_used": getattr(node, "stats", None).memory_used if getattr(node, "stats", None) else 0,
-                         "cpu_cores": getattr(node, "stats", None).cpu_cores if getattr(node, "stats", None) else 0
-                     } if getattr(node, "stats", None) else None
-                 })
+            for node in wavelink.Pool.nodes.values():
+                ns = getattr(node, "stats", None)
+                node_info: dict = {
+                    "identifier": node.identifier,
+                    "connected": node.status == wavelink.NodeStatus.CONNECTED,
+                    "address": api_url,
+                }
+                if ns:
+                    ram_used_mb   = round(ns.memory.used / 1024 / 1024, 1)
+                    ram_total_mb  = round(ns.memory.reservable / 1024 / 1024, 1)
+                    ram_pct       = round(ram_used_mb / ram_total_mb * 100, 1) if ram_total_mb else 0
+                    uptime_sec    = int(ns.uptime / 1000)
+                    h, rem = divmod(uptime_sec, 3600)
+                    m, s   = divmod(rem, 60)
+                    hb = getattr(node, "heartbeat", float("nan"))
+                    node_info["stats"] = {
+                        "players":      len(node.players),
+                        "cpu_pct":      round(ns.cpu.lavalink_load * 100, 1),
+                        "ram_used_mb":  ram_used_mb,
+                        "ram_total_mb": ram_total_mb,
+                        "ram_pct":      ram_pct,
+                        "uptime":       f"{h:02d}:{m:02d}:{s:02d}",
+                        "latency_ms":   round(hb * 1000, 2) if hb == hb else None,
+                    }
+                else:
+                    node_info["stats"] = None
+                nodes.append(node_info)
 
-        
-        # Count total players
         total_players = len(bot.voice_clients)
-        
+        raw_latency   = bot.latency
+        latency_ms    = round(raw_latency * 1000, 2) if raw_latency == raw_latency else None  # NaN check
+        version       = bot_version
+
         return {
             "botOnline": not bot.is_closed(),
-            "guilds": len(bot.guilds),
-            "users": len(bot.users),
-            "players": total_players,
-            "nodes": nodes
+            "version":   version,
+            "latency":   latency_ms,
+            "guilds":    len(bot.guilds),
+            "users":     len(bot.users),
+            "players":   total_players,
+            "nodes":     nodes,
+            "system": {
+                "cpu_pct":      cpu_pct,
+                "ram_used_gb":  round(vm.used  / 1024**3, 1),
+                "ram_total_gb": round(vm.total / 1024**3, 1),
+                "ram_pct":      vm.percent,
+                "disk_used_gb": round(du.used  / 1024**3, 1),
+                "disk_total_gb":round(du.total / 1024**3, 1),
+                "disk_pct":     round(du.percent, 1),
+            },
         }
     except Exception as e:
         logger.error(f"Error fetching status: {e}")

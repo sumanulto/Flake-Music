@@ -32,13 +32,33 @@ import { useAuthStore } from "@/store/useAuthStore";
 
 interface BotStatus {
   botOnline: boolean;
+  version?: string;
+  latency?: number;
   guilds: number;
   users: number;
   players: number;
+  system?: {
+    cpu_pct: number;
+    ram_used_gb: number;
+    ram_total_gb: number;
+    ram_pct: number;
+    disk_used_gb: number;
+    disk_total_gb: number;
+    disk_pct: number;
+  };
   nodes: Array<{
     identifier: string;
     connected: boolean;
-    stats: any;
+    address?: string;
+    stats: {
+      players: number;
+      cpu_pct: number;
+      ram_used_mb: number;
+      ram_total_mb: number;
+      ram_pct: number;
+      uptime: string;
+      latency_ms: number;
+    } | null;
   }>;
 }
 
@@ -397,32 +417,59 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                {/* Dropdown */}
+                {/* Status Panel */}
                 {isStateButtonOpen && (
-                  <div className="absolute right-0 w-44 z-40  text-gray-800 ">
-                      <div className="w-full flex items-end justify-end"><Triangle className="fill-slate-50 gap-0" /> </div>
-                    <div className="bg-slate-50 rounded-md rounded-tr-none shadow-xl z-30 flex flex-col space-y-2 p-3">
-                    {controlButtons.map((btn, index) => (
-                      <button
-                        key={index}
-                        onClick={btn.onClick}
-                        disabled={btn.disabled}
-                        className="flex items-center cursor-pointer justify-start space-x-2 px-3 py-2 hover:bg-gray-100 rounded-md transition disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {btn.icon}
-                        <span className="text-sm">{btn.label}</span>
-                      </button>
-                    ))}
-
-                    <div className="border-t border-gray-300 pt-2 mt-2">
-                      <button
-                        onClick={openTerminalDialog}
-                        className="flex items-center space-x-2 px-3 py-2 hover:bg-gray-100 rounded-md transition"
-                      >
-                        <span className="text-sm flex gap-2"> <SquareTerminal className="h-5 w-5" /> Terminal</span>
-                      </button>
+                  <div className="absolute right-0 mt-2 z-50 w-72">
+                    {/* caret */}
+                    <div className="w-full flex justify-end pr-3">
+                      <Triangle className="h-3 w-3 fill-neutral-900 text-neutral-900" />
                     </div>
-                  </div>
+                    <div className="bg-neutral-900 border border-neutral-700 rounded-lg shadow-2xl font-mono text-xs text-green-400 p-4 space-y-3">
+                      {/* System Info */}
+                      <div>
+                        <p className="text-neutral-500 uppercase tracking-widest text-[10px] mb-1">== System Info ==</p>
+                        <p>• CPU:  <span className="text-white">{botStatus?.system?.cpu_pct ?? "–"}%</span></p>
+                        <p>• RAM:  <span className="text-white">{botStatus?.system?.ram_used_gb ?? "–"}/{botStatus?.system?.ram_total_gb ?? "–"}GB</span> <span className="text-neutral-400">({botStatus?.system?.ram_pct ?? "–"}%)</span></p>
+                        <p>• DISK: <span className="text-white">{botStatus?.system?.disk_used_gb ?? "–"}/{botStatus?.system?.disk_total_gb ?? "–"}GB</span> <span className="text-neutral-400">({botStatus?.system?.disk_pct ?? "–"}%)</span></p>
+                      </div>
+
+                      <div className="border-t border-neutral-700" />
+
+                      {/* Bot Info */}
+                      <div>
+                        <p className="text-neutral-500 uppercase tracking-widest text-[10px] mb-1">Bot Information</p>
+                        <p>• VERSION: <span className="text-white">{botStatus?.version ?? "–"}</span></p>
+                        <p>• LATENCY: <span className="text-white">{botStatus?.latency ?? "–"}ms</span></p>
+                        <p>• GUILDS:  <span className="text-white">{botStatus?.guilds ?? 0}</span></p>
+                        <p>• USERS:   <span className="text-white">{botStatus?.users ?? 0}</span></p>
+                        <p>• PLAYERS: <span className="text-white">{botStatus?.players ?? 0}</span></p>
+                      </div>
+
+                      {/* Nodes */}
+                      {(botStatus?.nodes ?? []).map((node) => (
+                        <div key={node.identifier} className="border-t border-neutral-700 pt-3">
+                          <p className="text-neutral-500 uppercase tracking-widest text-[10px] mb-1">
+                            <span className={node.connected ? "text-green-500" : "text-red-500"}>●</span>
+                            {" "}{node.identifier} Node — {node.connected ? "Connected" : "Disconnected"}
+                          </p>
+                          {node.stats ? (
+                            <>
+                              <p>• ADDRESS: <span className="text-white">{node.address ?? "–"}</span></p>
+                              <p>• PLAYERS: <span className="text-white">{node.stats.players}</span></p>
+                              <p>• CPU:     <span className="text-white">{node.stats.cpu_pct}%</span></p>
+                              <p>• RAM:     <span className="text-white">{node.stats.ram_used_mb}/{node.stats.ram_total_mb}MB</span> <span className="text-neutral-400">({node.stats.ram_pct}%)</span></p>
+                              <p>• LATENCY: <span className="text-white">{node.stats.latency_ms}ms</span></p>
+                              <p>• UPTIME:  <span className="text-white">{node.stats.uptime}</span></p>
+                            </>
+                          ) : (
+                            <>
+                              <p>• ADDRESS: <span className="text-white">{node.address ?? "–"}</span></p>
+                              <p className="text-neutral-500 italic">No stats available</p>
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>

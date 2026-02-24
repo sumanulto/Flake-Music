@@ -305,9 +305,12 @@ class PlaylistCog(commands.Cog):
 
     @app_commands.command(name="like", description="Add current song to Liked Songs")
     async def like(self, interaction: discord.Interaction):
+        # Defer immediately — DB work can exceed Discord's 3-second response window.
+        await interaction.response.defer(ephemeral=True)
+
         player: wavelink.Player = interaction.guild.voice_client
         if not player or not player.current:
-            await interaction.response.send_message("Nothing playing.", ephemeral=True)
+            await interaction.followup.send("Nothing playing.", ephemeral=True)
             return
             
         track = player.current
@@ -318,7 +321,7 @@ class PlaylistCog(commands.Cog):
             playlist = (await session.execute(stmt)).scalar_one_or_none()
             
             if not playlist:
-                # Ensure user
+                # Ensure user exists
                 u_stmt = select(User).where(User.id == interaction.user.id)
                 if not (await session.execute(u_stmt)).scalar_one_or_none():
                     session.add(User(id=interaction.user.id, username=interaction.user.name))
@@ -328,15 +331,14 @@ class PlaylistCog(commands.Cog):
                 await session.commit()
                 await session.refresh(playlist)
             
-            # Check duplicate (simple check)
-            # We need to fetch tracks
+            # Check for duplicate track
             await session.refresh(playlist, ["tracks"])
             for t in playlist.tracks:
                 # Handle both formats for duplicate checking
                 t_info = t.track_data.get("info", t.track_data)
                 if t_info.get("uri") == track.uri:
-                     await interaction.response.send_message("Already in Liked Songs!", ephemeral=True)
-                     return
+                    await interaction.followup.send("Already in Liked Songs!", ephemeral=True)
+                    return
 
             track_data = {
                 "encoded": track.encoded,
@@ -354,7 +356,7 @@ class PlaylistCog(commands.Cog):
             ))
             await session.commit()
             
-            await interaction.response.send_message(f"Added **{track.title}** to Liked Songs ❤️", ephemeral=True)
+            await interaction.followup.send(f"Added **{track.title}** to Liked Songs ❤️", ephemeral=True)
 
     @playlist_group.command(name="delete", description="Delete a playlist")
     @app_commands.describe(name="The name of the playlist to delete")
