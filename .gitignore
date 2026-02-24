@@ -67,3 +67,7 @@ Thumbs.db
 # Lavalink
 lavalink/logs/
 *.log
+
+# Secrets and local files
+cookies.txt
+backend/cookies.txt

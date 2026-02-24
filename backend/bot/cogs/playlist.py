@@ -69,13 +69,25 @@ class PlaylistCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         # YouTube Fallback Logic (Reuse from music.py)
+        from backend.utils.youtube import extract_info
+        
         if "youtube.com" in query or "youtu.be" in query:
              info = await extract_info(query)
              if info:
                   title = info.get('title')
                   artist = info.get('artist') or info.get('uploader')
                   if title:
-                      query = f"ytmsearch:{title} {artist}" if artist else f"ytmsearch:{title}"
+                      search_query = f"{title} {artist}" if artist else title
+                      query = f"ytmsearch:{search_query}"
+                  else:
+                      await interaction.followup.send("Failed to extract video title from YouTube.")
+                      return
+             else:
+                 await interaction.followup.send("Failed to fetch information from YouTube. URL might be private.")
+                 return
+        else:
+             if not query.startswith(("http://", "https://", "ytsearch:", "ytmsearch:", "scsearch:")):
+                 query = f"ytmsearch:{query}"
 
         # Search Track
         try:
@@ -194,6 +206,9 @@ class PlaylistCog(commands.Cog):
         
         logger.info(f"Collected {len(tracks_data)} tracks.")
 
+        # Re-fetch the session queue from sq (it shadow-names the DB session used above)
+        session = sq.get(interaction.guild.id)
+
         # Determine current state to start playing as soon as the first track is found
         was_playing = player.playing
         queue_was_empty = (len(session.tracks) == 0)
@@ -211,12 +226,18 @@ class PlaylistCog(commands.Cog):
                     info = data.get("info", data) 
                     title = info.get("title")
                     author = info.get("author") or info.get("artist")
+                    uri = info.get("uri")
                     
-                    if not title:
-                        continue
-                        
                     try:
-                        query = f"ytmsearch:{title} {author}" if author else f"ytmsearch:{title}"
+                        # Prioritize exact URL to skip expensive YouTube Search if possible
+                        # BUT force text search for YouTube to avoid Lavalink IP blocks
+                        if uri and "youtube.com" not in uri and "youtu.be" not in uri:
+                            query = uri
+                        elif title:
+                            query = f"ytmsearch:{title} {author}" if author else f"ytmsearch:{title}"
+                        else:
+                            continue
+                            
                         tracks = await wavelink.Playable.search(query)
                         if tracks:
                             # Wavelink may return playlist or list

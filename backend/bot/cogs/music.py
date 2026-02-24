@@ -247,7 +247,7 @@ class Music(commands.Cog):
                                   # Individual search
                                   found_tracks = await wavelink.Playable.search(search_q)
                                   if found_tracks:
-                                      t = found_tracks[0]
+                                      t = found_tracks[0] if isinstance(found_tracks, list) else found_tracks.tracks[0]
                                       t.requester = interaction.user.id
                                       await player.queue.put_wait(t)
                                       if not first_track:
@@ -281,7 +281,16 @@ class Music(commands.Cog):
                       if title:
                           search_query = f"{title} {artist}" if artist else title
                           query = f"ytmsearch:{search_query}"
-                          await interaction.followup.send(f"Fallback: Searching for **{search_query}**...", ephemeral=True)
+                          await interaction.followup.send(f"Searching YouTube Music for **{search_query}**...", ephemeral=True)
+                      else:
+                          await interaction.followup.send("Failed to extract video title from YouTube.", ephemeral=True)
+                          return
+             else:
+                 await interaction.followup.send("Failed to fetch information from YouTube. URL might be private.", ephemeral=True)
+                 return
+        else:
+             if not query.startswith(("http://", "https://", "ytsearch:", "ytmsearch:", "scsearch:")):
+                 query = f"ytmsearch:{query}"
 
         try:
             tracks: wavelink.Search = await wavelink.Playable.search(query)

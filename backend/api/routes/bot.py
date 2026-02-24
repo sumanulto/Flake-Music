@@ -547,12 +547,18 @@ async def play_from_web(req: WebPlayRequest):
                         info = data.get("info", data)
                         title = info.get("title")
                         author = info.get("author") or info.get("artist")
+                        uri = info.get("uri")
                         
-                        if not title:
-                            continue
-                            
-                        search_q = f"ytmsearch:{title} {author}" if author else f"ytmsearch:{title}"
                         try:
+                            # Prioritize exact URL to skip expensive YouTube Search if possible
+                            # BUT force text search for YouTube to avoid Lavalink IP blocks
+                            if uri and "youtube.com" not in uri and "youtu.be" not in uri:
+                                search_q = uri
+                            elif title:
+                                search_q = f"ytmsearch:{title} {author}" if author else f"ytmsearch:{title}"
+                            else:
+                                continue
+                                
                             found = await wavelink.Playable.search(search_q)
                             if found:
                                 wl_track = found[0] if isinstance(found, list) else found.tracks[0]
