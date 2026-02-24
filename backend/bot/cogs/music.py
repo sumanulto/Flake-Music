@@ -172,7 +172,7 @@ class Music(commands.Cog):
                 embed.set_thumbnail(url=track.artwork)
 
         # Prepare View
-        view = MusicView(self.bot, player, self.dashboard_url)
+        view = MusicView(self.bot, player, self.dashboard_url, music_cog=self)
 
         # Logic to delete old and send new, or edit if last message
         channel = guild.voice_client.channel if guild.voice_client else None
@@ -327,10 +327,15 @@ class Music(commands.Cog):
     # Internal helper: resolve a TrackInfo and play it immediately            #
     # Lavalink's player.queue is NEVER used for routing — only for playing    #
     # ---------------------------------------------------------------------- #
-    async def _play_session_track(self, player: wavelink.Player, track_info: sq.TrackInfo):
+    async def _play_session_track(self, player: wavelink.Player, track_info: sq.TrackInfo, is_manual: bool = True):
         """Load a session track via Lavalink and play it immediately.
-        Sets player._session_navigating = True so on_track_end knows the
-        'replaced' event was intentional and should NOT advance the session.
+
+        is_manual=True  (default): user-initiated skip/previous — sets
+                        _session_navigating so on_track_end ignores the
+                        'replaced' event that fires for the interrupted track.
+        is_manual=False: called from on_track_end (natural advance / repeat) —
+                        no 'replaced' event fires, so the flag must NOT be set
+                        or it would swallow the next natural 'finished' event.
         """
         try:
             search_q = f"ytmsearch:{track_info.title} {track_info.author}"
@@ -341,11 +346,14 @@ class Music(commands.Cog):
                 session = sq.get(player.guild.id)
                 next_track = session.advance()
                 if next_track:
-                    await self._play_session_track(player, next_track)
+                    await self._play_session_track(player, next_track, is_manual=is_manual)
                 return
             wl_track = found[0]
             player.queue.clear()           # Lavalink queue stays empty
-            player._session_navigating = True  # Signal: don't auto-advance in on_track_end
+            if is_manual:
+                # Signal on_track_end to ignore the 'replaced' event for the
+                # track that is being interrupted right now.
+                player._session_navigating = True
             await player.play(wl_track)
         except Exception as e:
             logger.error(f"_play_session_track error: {e}")
@@ -412,7 +420,7 @@ class Music(commands.Cog):
             embed.description = "Queue is empty. Join a voice channel and play a song!"
             embed.color = discord.Color.dark_grey()
 
-        view = MusicView(self.bot, player, self.dashboard_url)
+        view = MusicView(self.bot, player, self.dashboard_url, music_cog=self)
 
         # Helper to send new
         async def send_new():
@@ -646,7 +654,9 @@ class Music(commands.Cog):
             session = sq.get(guild_id)
             next_track = session.advance()
             if next_track:
-                await self._play_session_track(player, next_track)
+                # is_manual=False: no track is being interrupted, so don't set
+                # _session_navigating (that flag is only for user-initiated skips).
+                await self._play_session_track(player, next_track, is_manual=False)
             else:
                 # End of queue
                 await self.refresh_player_interface(guild_id, force_new=False)

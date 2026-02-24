@@ -49,7 +49,6 @@ logging:
         com.sedmelluq.discord.lavaplayer.source.youtube.YoutubePersistentHttpStream: "OFF"
         com.sedmelluq.discord.lavaplayer.tools.ExceptionTools: "OFF"
         com.sedmelluq.discord.lavaplayer.tools.io.PersistentHttpStream: "OFF"
-        dev.lavalink.youtube: DEBUG
         dev.lavalink.youtube.YoutubeAudioSourceManager: "OFF"
         dev.lavalink.youtube.http.YoutubeOauth2Handler: INFO
         lavalink: INFO
@@ -102,8 +101,8 @@ plugins:
             ytdlp: false
         spotify:
             albumLoadLimit: 6
-            clientId: bfa0515d8afc4c9a92114c5e98138acc
-            clientSecret: 96e0d7743eb541058c46f41730c70f48
+            clientId: dgert34543gfdg3454gdf
+            clientSecret: sdfdsfdsfr4543tgg345t
             countryCode: IN
             localFiles: false
             playlistLoadLimit: 6
@@ -177,6 +176,10 @@ plugins:
         enabled: true
         oauth:
             enabled: true
+            refreshToken: null
+        pot:
+            token: Qrewrewrewr32432fssd
+            visitorData: sdfdsfsdfdsf%3D%3D
         remoteCipher:
             url: https://cipher.kikkia.dev/api
 sentry:
@@ -186,4 +189,4 @@ server:
     address: 0.0.0.0
     http2:
         enabled: false
-    port: 25566
+    port: 25452

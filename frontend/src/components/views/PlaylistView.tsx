@@ -12,6 +12,7 @@ import {
   MoreVertical,
   AlertTriangle,
   CheckCircle,
+  Upload,
 } from "lucide-react";
 import {
   getUserPlaylists,
@@ -241,6 +242,228 @@ function CreatePlaylistModal({
             Create
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Import Playlist Modal (SSE-driven)
+// ---------------------------------------------------------------------------
+function ImportPlaylistModal({
+  onClose,
+  onImported,
+  userId,
+}: {
+  onClose: () => void;
+  onImported: () => void;
+  userId: string | number;
+}) {
+  const [url, setUrl] = useState("");
+  const [importStatus, setImportStatus] = useState<"idle" | "importing" | "done" | "error">("idle");
+  const [progress, setProgress] = useState({ current: 0, total: 0, trackTitle: "" });
+  const [playlistName, setPlaylistName] = useState("");
+  const [error, setError] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const accessToken = useAuthStore((s) => s.accessToken);
+
+  useEffect(() => inputRef.current?.focus(), []);
+
+  const handleImport = async () => {
+    const trimmedUrl = url.trim();
+    if (!trimmedUrl) return;
+
+    setImportStatus("importing");
+    setError("");
+    setProgress({ current: 0, total: 0, trackTitle: "" });
+    setPlaylistName("");
+
+    try {
+      const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000/api/v1";
+      const response = await fetch(`${API_URL}/playlist/import`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        },
+        body: JSON.stringify({ url: trimmedUrl, user_id: String(userId) }),
+      });
+
+      if (!response.ok || !response.body) {
+        throw new Error(`Server returned ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.type === "start") {
+              setPlaylistName(data.playlist_name);
+              setProgress({ current: 0, total: data.total, trackTitle: "" });
+            } else if (data.type === "track") {
+              setProgress({
+                current: data.current,
+                total: data.total,
+                trackTitle: data.track_title,
+              });
+            } else if (data.type === "done") {
+              setPlaylistName(data.playlist_name);
+              setProgress((p) => ({ ...p, total: data.total, current: data.total }));
+              setImportStatus("done");
+              onImported();
+            } else if (data.type === "error") {
+              setError(data.message);
+              setImportStatus("error");
+            }
+          } catch {
+            // ignore malformed SSE frame
+          }
+        }
+      }
+    } catch (e: any) {
+      setError(e.message || "Import failed. Please try again.");
+      setImportStatus("error");
+    }
+  };
+
+  const progressPct =
+    progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="bg-neutral-900 border border-neutral-700 rounded-2xl shadow-2xl w-full max-w-md mx-4 p-6">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-5">
+          <div>
+            <h2 className="text-lg font-bold text-white">Import Playlist</h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Paste a YouTube playlist link to import all tracks
+            </p>
+          </div>
+          {importStatus !== "importing" && (
+            <button onClick={onClose} className="text-gray-400 hover:text-white transition">
+              <X size={20} />
+            </button>
+          )}
+        </div>
+
+        {/* ── Idle ── */}
+        {importStatus === "idle" && (
+          <>
+            <input
+              ref={inputRef}
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleImport()}
+              placeholder="https://www.youtube.com/playlist?list=..."
+              className="w-full bg-neutral-800 border border-neutral-600 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition mb-4 text-sm"
+            />
+            <div className="flex gap-3">
+              <button
+                onClick={onClose}
+                className="flex-1 py-2.5 rounded-lg bg-neutral-800 text-gray-400 hover:bg-neutral-700 transition text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleImport}
+                disabled={!url.trim()}
+                className="flex-1 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold transition text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                <Upload size={16} />
+                Start Import
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* ── Importing ── */}
+        {importStatus === "importing" && (
+          <div>
+            {playlistName && (
+              <p className="text-sm text-gray-300 mb-3">
+                Importing{" "}
+                <span className="font-semibold text-white">&ldquo;{playlistName}&rdquo;</span>
+              </p>
+            )}
+            {progress.total > 0 ? (
+              <>
+                <div className="flex justify-between text-xs text-gray-400 mb-1.5">
+                  <span className="truncate max-w-[75%]">
+                    {progress.trackTitle || "Processing…"}
+                  </span>
+                  <span className="flex-shrink-0 ml-2">
+                    {progress.current} / {progress.total}
+                  </span>
+                </div>
+                <div className="w-full bg-neutral-700 rounded-full h-2 mb-2">
+                  <div
+                    className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${progressPct}%` }}
+                  />
+                </div>
+                <p className="text-xs text-gray-500 text-center">{progressPct}% complete</p>
+              </>
+            ) : (
+              <div className="flex items-center justify-center py-6 text-gray-400">
+                <Loader2 size={22} className="animate-spin mr-2" />
+                <span className="text-sm">Fetching playlist info…</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Done ── */}
+        {importStatus === "done" && (
+          <div className="text-center py-4">
+            <CheckCircle size={44} className="text-green-400 mx-auto mb-3" />
+            <p className="text-white font-semibold text-lg">Import Complete!</p>
+            <p className="text-sm text-gray-400 mt-1">
+              &ldquo;{playlistName}&rdquo; was created with{" "}
+              <span className="text-white font-medium">{progress.total}</span> tracks.
+            </p>
+            <button
+              onClick={onClose}
+              className="mt-5 px-8 py-2.5 rounded-lg bg-green-600 hover:bg-green-700 text-white font-semibold transition text-sm"
+            >
+              Done
+            </button>
+          </div>
+        )}
+
+        {/* ── Error ── */}
+        {importStatus === "error" && (
+          <div className="text-center py-4">
+            <AlertTriangle size={44} className="text-red-400 mx-auto mb-3" />
+            <p className="text-white font-semibold">Import Failed</p>
+            <p className="text-sm text-gray-400 mt-1 break-words">{error}</p>
+            <div className="flex gap-3 mt-5">
+              <button
+                onClick={() => setImportStatus("idle")}
+                className="flex-1 py-2.5 rounded-lg bg-neutral-800 text-gray-400 hover:bg-neutral-700 transition text-sm"
+              >
+                Try Again
+              </button>
+              <button
+                onClick={onClose}
+                className="flex-1 py-2.5 rounded-lg bg-neutral-700 text-white hover:bg-neutral-600 transition text-sm"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -627,6 +850,7 @@ export default function PlaylistView({ selectedGuild = "" }: { selectedGuild?: s
   const [loading, setLoading] = useState(true);
   const [selectedPlaylist, setSelectedPlaylist] = useState<Playlist | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
   const toastId = useRef(0);
@@ -710,6 +934,13 @@ export default function PlaylistView({ selectedGuild = "" }: { selectedGuild?: s
           onCreated={fetchPlaylists}
         />
       )}
+      {showImport && userId && (
+        <ImportPlaylistModal
+          userId={userId}
+          onClose={() => setShowImport(false)}
+          onImported={fetchPlaylists}
+        />
+      )}
 
       {/* Header */}
       <div className="flex items-center justify-between mb-6 flex-shrink-0">
@@ -717,13 +948,22 @@ export default function PlaylistView({ selectedGuild = "" }: { selectedGuild?: s
           <h1 className="text-3xl font-black text-white">Your Library</h1>
           <p className="text-sm text-gray-400 mt-1">{playlists.length} playlist{playlists.length !== 1 ? "s" : ""}</p>
         </div>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 bg-green-500 hover:bg-green-600 text-black font-bold px-4 py-2.5 rounded-full transition text-sm"
-        >
-          <Plus size={18} />
-          New Playlist
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowImport(true)}
+            className="flex items-center gap-2 bg-neutral-800 hover:bg-neutral-700 border border-neutral-600 hover:border-blue-500 text-gray-300 hover:text-blue-400 font-semibold px-4 py-2.5 rounded-full transition text-sm"
+          >
+            <Upload size={16} />
+            Import Playlist
+          </button>
+          <button
+            onClick={() => setShowCreate(true)}
+            className="flex items-center gap-2 bg-green-500 hover:bg-green-600 text-black font-bold px-4 py-2.5 rounded-full transition text-sm"
+          >
+            <Plus size={18} />
+            New Playlist
+          </button>
+        </div>
       </div>
 
       {/* Search */}

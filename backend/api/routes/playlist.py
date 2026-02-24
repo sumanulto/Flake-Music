@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Body
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
@@ -7,6 +8,10 @@ from backend.database.models.models import Playlist, PlaylistTrack, User
 from pydantic import BaseModel
 from typing import List, Optional, Any
 from datetime import datetime
+import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/playlist", tags=["Playlist"])
 
@@ -269,6 +274,200 @@ async def check_track_containment(request: CheckContainmentRequest, db: AsyncSes
         })
 
     return containing_playlists
+
+
+# ---------------------------------------------------------------------------
+# Playlist Import via SSE (Server-Sent Events)
+# ---------------------------------------------------------------------------
+
+class ImportPlaylistRequest(BaseModel):
+    url: str
+    # Accept as str so the frontend can send the raw Discord snowflake without
+    # JavaScript's Number() truncating it beyond Number.MAX_SAFE_INTEGER.
+    user_id: str
+
+
+@router.post("/import")
+async def import_playlist_sse(request: ImportPlaylistRequest):
+    """
+    Import tracks from a playlist URL and stream progress via Server-Sent Events.
+
+    Supported sources:
+      • YouTube / any yt-dlp-supported URL  — uses yt-dlp (flat extraction)
+      • Spotify playlist / album / track    — uses Spotify Web API (no DRM issues)
+
+    All tracks are built in-memory; only 2 DB round-trips happen regardless
+    of playlist size: one to create the playlist, one bulk-insert of all tracks.
+    """
+    from backend.utils.spotify import is_spotify_url, fetch_spotify_playlist
+    from backend.utils.youtube import extract_info
+    from backend.database.core.db import async_session_factory
+
+    # Python int is arbitrary-width — full snowflake precision preserved.
+    user_id_int = int(request.user_id)
+
+    # ── Detect source ────────────────────────────────────────────────────────
+    use_spotify = is_spotify_url(request.url)
+
+    async def event_generator():
+        async with async_session_factory() as db:
+            try:
+                # ── 1. Fetch playlist info ───────────────────────────────────
+                if use_spotify:
+                    try:
+                        spotify_result = await fetch_spotify_playlist(request.url)
+                    except ValueError as ve:
+                        yield f"data: {json.dumps({'type': 'error', 'message': str(ve)})}\n\n"
+                        return
+                    if not spotify_result:
+                        yield f"data: {json.dumps({'type': 'error', 'message': 'Could not parse Spotify URL. Supported: playlist, album, track links.'})}\n\n"
+                        return
+                    playlist_name = spotify_result.name
+                    total = spotify_result.total
+                else:
+                    info = await extract_info(request.url)
+                    if not info:
+                        yield f"data: {json.dumps({'type': 'error', 'message': 'Could not extract playlist from the given URL. Please check the URL and try again.'})}\n\n"
+                        return
+                    playlist_name = (
+                        info.get("title")
+                        or info.get("playlist_title")
+                        or "Imported Playlist"
+                    )
+                    entries = list(info.get("entries") or [])
+                    if not entries and info.get("id"):
+                        entries = [info]
+                    if not entries:
+                        yield f"data: {json.dumps({'type': 'error', 'message': 'No tracks found at that URL.'})}\n\n"
+                        return
+                    total = len(entries)
+
+                # ── 2. Ensure user row exists (1 read, maybe 1 write) ────────
+                user_stmt = select(User).where(User.id == user_id_int)
+                user = (await db.execute(user_stmt)).scalar_one_or_none()
+                if not user:
+                    user = User(id=user_id_int, username="Unknown")
+                    db.add(user)
+                    await db.commit()
+
+                # ── 3. Create the playlist (1 write) ─────────────────────────
+                new_playlist = Playlist(
+                    name=playlist_name,
+                    user_id=user_id_int,
+                    is_liked_songs=False,
+                )
+                db.add(new_playlist)
+                await db.commit()
+                await db.refresh(new_playlist)
+
+                yield f"data: {json.dumps({'type': 'start', 'playlist_id': new_playlist.id, 'playlist_name': playlist_name, 'total': total})}\n\n"
+
+                # ── 4. Build track objects in-memory, stream progress ────────
+                now = datetime.utcnow().isoformat()
+                track_objects: list = []
+
+                if use_spotify:
+                    # Async iterator — pages fetched lazily from Spotify API
+                    i = 0
+                    async for track_entry in spotify_result.tracks:
+                        title    = track_entry.get("title", "Unknown Track")
+                        author   = track_entry.get("author", "Unknown")
+                        uri      = track_entry.get("uri", "")
+                        duration_secs = track_entry.get("duration_secs", 0)
+                        thumbnail = track_entry.get("thumbnail")
+
+                        track_objects.append(PlaylistTrack(
+                            playlist_id=new_playlist.id,
+                            track_data={
+                                "encoded": None,
+                                "info": {
+                                    "title": title,
+                                    "author": author,
+                                    "uri": uri,
+                                    "length": int(duration_secs * 1000) if duration_secs else 0,
+                                    "is_stream": False,
+                                    "thumbnail": thumbnail,
+                                },
+                            },
+                            added_at=now,
+                        ))
+
+                        i += 1
+                        yield f"data: {json.dumps({'type': 'track', 'current': i, 'total': total, 'track_title': title})}\n\n"
+                else:
+                    # yt-dlp entries — all in memory already
+                    for i, entry in enumerate(entries):
+                        if not entry:
+                            continue
+
+                        title = (
+                            entry.get("title")
+                            or entry.get("fulltitle")
+                            or "Unknown Track"
+                        )
+                        raw_uri = (
+                            entry.get("webpage_url")
+                            or entry.get("url")
+                            or ""
+                        )
+                        if raw_uri and not raw_uri.startswith("http"):
+                            raw_uri = f"https://www.youtube.com/watch?v={raw_uri}"
+
+                        author = (
+                            entry.get("uploader")
+                            or entry.get("channel")
+                            or entry.get("artist")
+                            or "Unknown"
+                        )
+                        duration_secs = entry.get("duration") or 0
+
+                        thumbnail = entry.get("thumbnail")
+                        if not thumbnail:
+                            thumbs = entry.get("thumbnails") or []
+                            if thumbs:
+                                last = thumbs[-1]
+                                thumbnail = last.get("url") if isinstance(last, dict) else last
+                        elif isinstance(thumbnail, dict):
+                            thumbnail = thumbnail.get("url")
+
+                        track_objects.append(PlaylistTrack(
+                            playlist_id=new_playlist.id,
+                            track_data={
+                                "encoded": None,
+                                "info": {
+                                    "title": title,
+                                    "author": author,
+                                    "uri": raw_uri,
+                                    "length": int(duration_secs * 1000) if duration_secs else 0,
+                                    "is_stream": False,
+                                    "thumbnail": thumbnail,
+                                },
+                            },
+                            added_at=now,
+                        ))
+
+                        yield f"data: {json.dumps({'type': 'track', 'current': i + 1, 'total': total, 'track_title': title})}\n\n"
+
+                # ── 5. Single bulk-insert for ALL tracks (1 DB write total) ──
+                db.add_all(track_objects)
+                await db.commit()
+
+                yield f"data: {json.dumps({'type': 'done', 'playlist_id': new_playlist.id, 'playlist_name': playlist_name, 'total': len(track_objects)})}\n\n"
+
+            except Exception as exc:
+                logger.error(f"Playlist import error: {exc}", exc_info=True)
+                yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
 
 @router.delete("/{playlist_id}")
 async def delete_playlist(playlist_id: int, user_id: int, db: AsyncSession = Depends(get_db)):
