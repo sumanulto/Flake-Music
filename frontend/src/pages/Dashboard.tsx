@@ -22,6 +22,8 @@ import {
   X,
   LogOut,
   Settings,
+  Lock,
+  ShieldAlert,
 } from "lucide-react";
 import { Player } from "@/types/player";
 import { api } from "@/lib/api";
@@ -45,6 +47,8 @@ export default function Dashboard() {
   const [botStatus, setBotStatus] = useState<BotStatus | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
   const [selectedGuild, setSelectedGuild] = useState<string>("");
+  // Maps guildId -> whether the logged-in user is in that guild's voice channel
+  const [userVoiceGuilds, setUserVoiceGuilds] = useState<Record<string, boolean>>({});
 
   const selectedGuildRef = useRef(selectedGuild);
 
@@ -54,6 +58,7 @@ export default function Dashboard() {
 
   const navigate = useNavigate();
   const logout = useAuthStore((state) => state.logout);
+  const user = useAuthStore((state) => state.user);
 
   const handleLogout = () => {
     logout();
@@ -128,9 +133,31 @@ export default function Dashboard() {
         if (data.length > 0) {
           setSelectedGuild(data[0].guildId);
         } else {
-          setSelectedGuild(""); 
+          setSelectedGuild("");
         }
       }
+
+      // ── Voice-channel check for every active guild ──────────────────────
+      if (user?.id && data.length > 0) {
+        const checks = await Promise.allSettled(
+          data.map((p) =>
+            api
+              .get("/bot/voice-check", {
+                params: { guild_id: p.guildId, user_id: user.id },
+              })
+              .then((r) => ({ guildId: p.guildId, inVoice: !!r.data?.in_voice }))
+              .catch(() => ({ guildId: p.guildId, inVoice: false }))
+          )
+        );
+        const map: Record<string, boolean> = {};
+        for (const result of checks) {
+          if (result.status === "fulfilled") {
+            map[result.value.guildId] = result.value.inVoice;
+          }
+        }
+        setUserVoiceGuilds(map);
+      }
+      // ────────────────────────────────────────────────────────────────────
     } catch (error) {
       console.error("Failed to fetch players:", error);
     }
@@ -453,23 +480,38 @@ export default function Dashboard() {
           {activeView === "player" && (
                  <div className="flex-1 overflow-hidden p-6 relative">
                     <div className="absolute inset-0 bg-gradient-to-b from-green-900/10 to-transparent pointer-events-none" />
-                    
+
                     {players.find((p) => p.guildId === selectedGuild) ? (
-                      <PlayerCard
-                        currentPlayer={players.find((p) => p.guildId === selectedGuild)!}
-                        controlPlayer={controlPlayer}
-                        formatTime={formatTime}
-                        isMuted={isMuted}
-                        toggleMute={toggleMute}
-                        volume={volume}
-                        setVolume={handleVolumeChange}
-                        loading={loading}
-                        seekToPosition={seekToPosition}
-                        setIsSeekingTimeline={setIsSeekingTimeline}
-                        selectedGuild={selectedGuild}
-                        isSeekingTimeline={isSeekingTimeline}
-                        performSearch={performSearch}
-                      />
+                      // ── Voice-channel guard ──────────────────────────────
+                      userVoiceGuilds[selectedGuild] === false ? (
+                        <div className="flex flex-col items-center justify-center h-full gap-4 text-center">
+                          <div className="bg-yellow-900/30 border border-yellow-700/50 rounded-2xl p-8 max-w-md">
+                            <ShieldAlert className="h-14 w-14 mx-auto mb-4 text-yellow-500" />
+                            <h3 className="text-xl font-semibold text-yellow-300 mb-2">Access Restricted</h3>
+                            <p className="text-yellow-200/70 text-sm">
+                              You're not in this server's voice channel.<br />
+                              Join the voice channel in Discord first to control this player.
+                            </p>
+                          </div>
+                        </div>
+                      ) : (
+                      // ── Normal player ────────────────────────────────────
+                        <PlayerCard
+                          currentPlayer={players.find((p) => p.guildId === selectedGuild)!}
+                          controlPlayer={controlPlayer}
+                          formatTime={formatTime}
+                          isMuted={isMuted}
+                          toggleMute={toggleMute}
+                          volume={volume}
+                          setVolume={handleVolumeChange}
+                          loading={loading}
+                          seekToPosition={seekToPosition}
+                          setIsSeekingTimeline={setIsSeekingTimeline}
+                          selectedGuild={selectedGuild}
+                          isSeekingTimeline={isSeekingTimeline}
+                          performSearch={performSearch}
+                        />
+                      )
                     ) : (
                       <div className="flex items-center justify-center h-full text-gray-500">
                         {selectedGuild ? "No player active for this guild" : "Select a guild to view player"}
@@ -499,12 +541,18 @@ export default function Dashboard() {
                     key={player.guildId}
                     className="bg-neutral-800 rounded-lg p-6 border border-stone-800"
                   >
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-lg font-semibold">
-                        {getServerName(player.guildId)}
-                      </h3>
+                    <div className="flex items-start justify-between mb-4">
+                      <div className="flex flex-col min-w-0 mr-2">
+                        <h3 className="text-lg font-semibold truncate">
+                          {player.guildName || `Server ${player.guildId.slice(-4)}`}
+                        </h3>
+                        <span className="text-xs text-gray-400 mt-0.5 flex items-center gap-1 truncate">
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 text-gray-500 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+                          {player.voiceChannel}
+                        </span>
+                      </div>
                       <span
-                        className={`px-2 py-1 rounded-full text-xs ${
+                        className={`px-2 py-1 rounded-full text-xs shrink-0 ${
                           player.connected
                             ? "bg-green-900 text-green-300"
                             : "bg-red-900 text-red-300"
@@ -559,15 +607,33 @@ export default function Dashboard() {
                       </div>
                     </div>
 
-                    <button
-                      onClick={() => {
+                    {userVoiceGuilds[player.guildId] === false ? (
+                      // ── User NOT in this voice channel ───────────────────
+                      <div className="mt-4">
+                        <button
+                          disabled
+                          className="w-full px-4 py-2 bg-neutral-700 text-neutral-500 rounded-lg flex items-center justify-center gap-2 cursor-not-allowed"
+                        >
+                          <Lock className="h-4 w-4" />
+                          Control Player
+                        </button>
+                        <p className="mt-2 text-xs text-yellow-500/80 flex items-center gap-1 justify-center">
+                          <ShieldAlert className="h-3.5 w-3.5" />
+                          You're not in this voice channel
+                        </p>
+                      </div>
+                    ) : (
+                      // ── User IS in this voice channel (or state unknown) ─
+                      <button
+                        onClick={() => {
                           setSelectedGuild(player.guildId);
                           setActiveView("player");
-                      }}
-                      className="w-full mt-4 px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg transition-colors"
-                    >
-                      Control Player
-                    </button>
+                        }}
+                        className="w-full mt-4 px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg transition-colors"
+                      >
+                        Control Player
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

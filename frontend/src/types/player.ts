@@ -21,6 +21,7 @@ export interface PlayerSettings {
 
 export interface Player {
   guildId: string;
+  guildName?: string;
   voiceChannel: string;
   textChannel: string;
   connected: boolean;

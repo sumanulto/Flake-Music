@@ -45,8 +45,26 @@ class PlaylistCog(commands.Cog):
 
     @playlist_group.command(name="add", description="Add a song to a playlist")
     async def add(self, interaction: discord.Interaction, name: str, query: str):
+        # Detect playlist URLs early and reject them with a helpful message
+        _q = query.strip()
+        _is_yt_playlist = (
+            ("youtube.com/playlist" in _q or "music.youtube.com/playlist" in _q)
+            and "list=" in _q
+        )
+        _is_spotify_playlist = "open.spotify.com/playlist/" in _q
+
+        if _is_yt_playlist or _is_spotify_playlist:
+            source = "YouTube Music" if _is_yt_playlist else "Spotify"
+            await interaction.response.send_message(
+                f"⚠️ **{source} playlist links cannot be added here.**\n\n"
+                "This command only supports **individual tracks**.\n"
+                "To import an entire playlist, use the **Playlist Transfer** option on the web dashboard.",
+                ephemeral=True,
+            )
+            return
+
         await interaction.response.defer(ephemeral=True)
-        
+
         # YouTube Fallback Logic (Reuse from music.py)
         if "youtube.com" in query or "youtu.be" in query:
              info = await extract_info(query)

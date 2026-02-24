@@ -16,7 +16,6 @@ interface SidebarProps {
   players: Player[];
   selectedGuild: string;
   setSelectedGuild: (guildId: string) => void;
-  getServerName: (guildId: string) => string;
   botStatus: any;
   stats: Stat[];
   onLogout: () => void;
@@ -29,7 +28,6 @@ export default function Sidebar({
   players,
   selectedGuild,
   setSelectedGuild,
-  getServerName,
   stats,
 }: SidebarProps) {
 
@@ -96,7 +94,7 @@ export default function Sidebar({
                 )}
 
                 <span className="text-[9px] text-center truncate w-full mt-1">
-                  {getServerName(player.guildId)}
+                  {player.guildName || `Server ${player.guildId.slice(-4)}`}
                 </span>
               </button>
             ))}
@@ -172,12 +170,17 @@ export default function Sidebar({
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2 min-w-0">
                   <Server className="h-4 w-4 flex-shrink-0" />
-                  <span className="text-sm font-medium truncate">
-                    {getServerName(player.guildId)}
-                  </span>
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-sm font-medium truncate">
+                      {player.guildName || `Server ${player.guildId.slice(-4)}`}
+                    </span>
+                    <span className="text-[10px] opacity-60 truncate">
+                      🔊 {player.voiceChannel}
+                    </span>
+                  </div>
                 </div>
                 {player.playing && (
-                  <div className="flex space-x-1 mt-1 h-4 items-end">
+                  <div className="flex space-x-1 h-4 items-end flex-shrink-0">
                     {[0, 0.2, 0.4].map((delay, i) => (
                       <div
                         key={i}
@@ -186,7 +189,7 @@ export default function Sidebar({
                           animationDelay: `${delay}s`,
                           animationDuration: "1s",
                           animationIterationCount: "infinite",
-                          transformOrigin: "bottom", // critical for bottom growth
+                          transformOrigin: "bottom",
                         }}
                       />
                     ))}

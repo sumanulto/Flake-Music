@@ -120,6 +120,7 @@ async def get_players():
 
                 players_data.append({
                     "guildId": str(vc.guild.id),
+                    "guildName": vc.guild.name,
                     "voiceChannel": vc.channel.name if vc.channel else "Unknown",
                     "textChannel": "Unknown",
                     "connected": vc.connected,

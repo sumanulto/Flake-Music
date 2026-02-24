@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react';
-import logoUrl from '/tab.png';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 const REDIRECT_URI = import.meta.env.VITE_DISCORD_REDIRECT_URI || 'http://localhost:5173/auth/callback';
 
@@ -56,14 +55,25 @@ const features = [
   { icon: '🤖', title: 'AI Voice Commands', desc: 'Speak naturally — AI understands your voice commands to play, skip, search & more hands-free.' },
 ];
 
+interface Ripple { id: number; x: number; y: number; }
+
 export default function Login() {
   const [year, setYear] = useState(new Date().getFullYear());
+  const [ripples, setRipples] = useState<Ripple[]>([]);
+  const rippleCounter = useRef(0);
 
   useEffect(() => {
     const interval = setInterval(() => {
       setYear(new Date().getFullYear());
-    }, 1000 * 60 * 60); // refresh every hour
+    }, 1000 * 60 * 60);
     return () => clearInterval(interval);
+  }, []);
+
+  const handlePageClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const id = ++rippleCounter.current;
+    const rect = e.currentTarget.getBoundingClientRect();
+    setRipples(prev => [...prev, { id, x: e.clientX - rect.left, y: e.clientY - rect.top }]);
+    setTimeout(() => setRipples(prev => prev.filter(r => r.id !== id)), 900);
   }, []);
 
   const handleLogin = () => {
@@ -72,37 +82,30 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-[#080a08] text-white flex flex-col">
+    <div
+      className="min-h-screen bg-[#080a08] text-white flex flex-col overflow-hidden"
+      style={{ position: 'relative' }}
+      onClick={handlePageClick}
+    >
+      {/* ── Click ripples ── */}
+      {ripples.map(r => (
+        <span
+          key={r.id}
+          className="login-ripple"
+          style={{ left: r.x, top: r.y }}
+        />
+      ))}
 
       {/* ── Hero ── */}
-      <section className="relative flex flex-col items-center justify-center text-center px-6 py-24 overflow-hidden">
-        {/* Background ambient video */}
-        <video
-          autoPlay
-          loop
-          muted
-          playsInline
-          className="absolute inset-0 w-full h-full object-cover pointer-events-none"
-          style={{ opacity: 0.12 }}
-        >
-          <source src="/beach water.mp4" type="video/mp4" />
-        </video>
-
-        {/* Animated glowing background orbs */}
-        <style>{`
-          @keyframes orbPulse {
-            0%, 100% { opacity: 0.18; transform: translateX(-50%) scale(1); }
-            50%        { opacity: 0.32; transform: translateX(-50%) scale(1.12); }
-          }
-          @keyframes orbDrift {
-            0%, 100% { opacity: 0.08; transform: scale(1) translateY(0px); }
-            50%        { opacity: 0.18; transform: scale(1.1) translateY(-20px); }
-          }
-          @keyframes logoGlow {
-            0%, 100% { box-shadow: 0 0 32px 8px rgba(34,197,94,0.35); }
-            50%        { box-shadow: 0 0 56px 16px rgba(52,211,153,0.55); }
-          }
-        `}</style>
+      <section
+        className="relative flex flex-col items-center justify-center text-center px-6 py-24 overflow-hidden"
+        style={{
+          background:
+            'radial-gradient(ellipse 80% 60% at 50% 0%, rgba(21,128,61,0.22) 0%, rgba(5,46,22,0.13) 50%, transparent 100%), ' +
+            'linear-gradient(180deg, rgba(5,46,22,0.18) 0%, transparent 100%)',
+        }}
+      >
+        {/* Animated glowing background orbs — pure CSS, no server requests */}
         <div className="absolute inset-0 pointer-events-none overflow-hidden">
           <div style={{
             position: 'absolute',
@@ -145,8 +148,10 @@ export default function Login() {
           style={{ animation: 'logoGlow 4s ease-in-out infinite' }}
         >
           <img
-            src={logoUrl}
+            src="/tab.png"
             alt="Flake Music Logo"
+            loading="lazy"
+            decoding="async"
             className="w-full h-full object-cover rounded-full"
           />
         </div>

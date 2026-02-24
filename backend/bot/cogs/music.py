@@ -6,6 +6,7 @@ from discord import app_commands
 from discord.ext import commands
 from typing import cast, Dict, Optional
 from backend.bot.cogs.views.music_view import MusicView
+from backend.bot.cogs.views.queue_view import QueueView
 import asyncio
 from backend.bot import session_queue as sq
 
@@ -554,17 +555,26 @@ class Music(commands.Cog):
         await player.set_filters(filters)
         await interaction.response.send_message(f"Applied filter: **{preset.name}**", ephemeral=True)
 
-    @app_commands.command(name="queue", description="Show queue")
+    @app_commands.command(name="queue", description="Show the music queue")
     async def queue(self, interaction: discord.Interaction):
-        # We can keep this command or just rely on the interface
+        if not interaction.guild:
+            return
+
+        session = sq.get(interaction.guild.id)
         player: wavelink.Player = cast(wavelink.Player, interaction.guild.voice_client)
-        if player:
-             # Just show a simple ephemeral list
-             if player.queue.is_empty:
-                  await interaction.response.send_message("Queue empty", ephemeral=True)
-                  return
-             desc = "\n".join([f"{i+1}. {t.title}" for i, t in enumerate(player.queue[:10])])
-             await interaction.response.send_message(desc, ephemeral=True)
+
+        if not session.tracks:
+            await interaction.response.send_message("The queue is empty.", ephemeral=True)
+            return
+
+        # Store context so refresh_player_interface always has a channel
+        if not hasattr(self, 'guild_contexts'):
+            self.guild_contexts = {}
+        self.guild_contexts[interaction.guild.id] = interaction.channel.id
+
+        view = QueueView(session, player)
+        embed = view.build_embed()
+        await interaction.response.send_message(embed=embed, view=view)
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):

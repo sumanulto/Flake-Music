@@ -28,8 +28,32 @@ MYSQL_DATABASE_URL = os.getenv(
     "mysql+aiomysql://flake:flake_password@localhost:3306/flake_music",
 )
 
-neon_engine = create_async_engine(NEON_DATABASE_URL, echo=True) if USE_NEON_DB else None
-mysql_engine = create_async_engine(MYSQL_DATABASE_URL, echo=True) if USE_MYSQL_DB else None
+neon_engine = (
+    create_async_engine(
+        NEON_DATABASE_URL,
+        echo=True,
+        # NeonDB serverless closes idle connections after ~5 min.
+        # pool_pre_ping re-tests the connection before use and discards dead ones.
+        pool_pre_ping=True,
+        # Recycle connections every 4 minutes (before NeonDB kills them at 5 min).
+        pool_recycle=240,
+        # Keep the pool small — NeonDB free tier has a concurrent connection limit.
+        pool_size=3,
+        max_overflow=2,
+    )
+    if USE_NEON_DB
+    else None
+)
+mysql_engine = (
+    create_async_engine(
+        MYSQL_DATABASE_URL,
+        echo=True,
+        pool_pre_ping=True,
+        pool_recycle=3600,
+    )
+    if USE_MYSQL_DB
+    else None
+)
 
 primary_engine = neon_engine if neon_engine is not None else mysql_engine
 engine = primary_engine
