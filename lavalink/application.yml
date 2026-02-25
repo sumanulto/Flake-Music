@@ -2,7 +2,7 @@ lavalink:
     plugins:
         - dependency: com.github.topi314.lavasrc:lavasrc-plugin:4.8.1
           repository: https://maven.lavalink.dev/releases
-        - dependency: dev.lavalink.youtube:youtube-plugin:1.17.0
+        - dependency: dev.lavalink.youtube:youtube-plugin:1.18.0
           repository: https://maven.lavalink.dev/releases
     pluginsDir: ./plugins
     server:
@@ -101,8 +101,8 @@ plugins:
             ytdlp: false
         spotify:
             albumLoadLimit: 6
-            clientId: dgert34543gfdg3454gdf
-            clientSecret: sdfdsfdsfr4543tgg345t
+            clientId: "YOUR_SPOTIFY_CLIENT_ID"
+            clientSecret: "YOUR_SPOTIFY_CLIENT_SECRET"
             countryCode: IN
             localFiles: false
             playlistLoadLimit: 6
@@ -164,22 +164,23 @@ plugins:
                 searching: false
                 videoLoading: true
         clients:
+            - TVHTML5
+            - TVHTML5_SIMPLY
             - TV
-            - TVHTML5EMBEDDED
-            - WEB
-            - MWEB
-            - WEBEMBEDDED
             - MUSIC
             - ANDROID_VR
             - ANDROID_MUSIC
+            - WEB
+            - MWEB
+            - WEBEMBEDDED
             - IOS
         enabled: true
         oauth:
             enabled: true
-            refreshToken: null
+            refreshToken: "YOUR_YOUTUBE_REFRESH_TOKEN"
         pot:
-            token: Qrewrewrewr32432fssd
-            visitorData: sdfdsfsdfdsf%3D%3D
+            token: "YOUR_YOUTUBE_POTOKEN"
+            visitorData: "YOUR_YOUTUBE_VISITORDATA"
         remoteCipher:
             url: https://cipher.kikkia.dev/api
 sentry:
@@ -189,4 +190,4 @@ server:
     address: 0.0.0.0
     http2:
         enabled: false
-    port: 25452
+    port: 25566
