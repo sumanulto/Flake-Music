@@ -37,6 +37,16 @@ class MusicView(discord.ui.View):
                     row=2,
                 )
             )
+
+        like_btn = discord.ui.Button(
+            label="💖 Like",
+            style=discord.ButtonStyle.secondary,
+            custom_id="like_song_btn",
+            row=2,
+        )
+        like_btn.callback = self.like_action
+        self.add_item(like_btn)
+
         self.update_buttons()
 
     # ------------------------------------------------------------------ #
@@ -227,3 +237,60 @@ class MusicView(discord.ui.View):
         else:
             session.repeat_mode = "off"
         await self._ack_and_refresh(interaction)
+
+    async def like_action(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        if not self.player or not self.player.current:
+            await interaction.followup.send("Nothing playing.", ephemeral=True)
+            return
+
+        track = self.player.current
+
+        from backend.database.core.db import async_session_factory
+        from backend.database.models.models import Playlist, PlaylistTrack, User
+        from sqlalchemy import select
+        import datetime
+
+        async with async_session_factory() as session:
+            # Get Liked Songs playlist
+            stmt = select(Playlist).where(Playlist.user_id == interaction.user.id, Playlist.is_liked_songs == True)
+            playlist = (await session.execute(stmt)).scalar_one_or_none()
+
+            if not playlist:
+                # Ensure user exists
+                u_stmt = select(User).where(User.id == interaction.user.id)
+                if not (await session.execute(u_stmt)).scalar_one_or_none():
+                    session.add(User(id=interaction.user.id, username=interaction.user.name))
+
+                playlist = Playlist(name="Liked Songs", user_id=interaction.user.id, is_liked_songs=True)
+                session.add(playlist)
+                await session.commit()
+                await session.refresh(playlist)
+
+            # Check for duplicate track
+            await session.refresh(playlist, ["tracks"])
+            for t in playlist.tracks:
+                # Handle both formats for duplicate checking
+                t_info = t.track_data.get("info", t.track_data)
+                if t_info.get("uri") == track.uri:
+                    await interaction.followup.send("Already in Liked Songs!", ephemeral=True)
+                    return
+
+            track_data = {
+                "encoded": track.encoded,
+                "info": {
+                    "title": track.title,
+                    "author": track.author,
+                    "uri": track.uri,
+                    "length": track.length
+                }
+            }
+            session.add(PlaylistTrack(
+                playlist_id=playlist.id,
+                track_data=track_data,
+                added_at=datetime.datetime.utcnow().isoformat()
+            ))
+            await session.commit()
+
+            await interaction.followup.send(f"Added **{track.title}** to Liked Songs ❤️", ephemeral=True)

@@ -1,4 +1,5 @@
 import os
+import sys
 import asyncio
 import discord
 import wavelink
@@ -60,6 +61,8 @@ class MusicBot(commands.Bot):
             return 1.0
 
     async def setup_hook(self):
+        self._verify_watermarks()
+        
         # Load Cogs
         for filename in os.listdir("./backend/bot/cogs"):
             if filename.endswith(".py") and filename != "__init__.py":
@@ -132,5 +135,37 @@ class MusicBot(commands.Bot):
             except Exception as e:
                 logger.error(f"Failed to update bot presence: {e}")
             await asyncio.sleep(self.status_rotation_seconds)
+
+    def _verify_watermarks(self):
+        try:
+            # Check backend music.py
+            music_path = os.path.join("backend", "bot", "cogs", "music.py")
+            if os.path.exists(music_path):
+                with open(music_path, "r", encoding="utf-8") as f:
+                    music_content = f.read()
+                    if "Designed by Kraftamine" not in music_content:
+                        logger.critical("CRITICAL: Watermark 'Designed by Kraftamine' missing from backend/bot/cogs/music.py. The bot will not start.")
+                        os._exit(1)
+            else:
+                logger.warning(f"Watermark verification skipped: {music_path} not found.")
+
+            # Check frontend Login.tsx
+            login_path = os.path.join("frontend", "src", "pages", "Login.tsx")
+            if os.path.exists(login_path):
+                with open(login_path, "r", encoding="utf-8") as f:
+                    login_content = f.read()
+                    if "Flake Music. All rights reserved." not in login_content:
+                        logger.critical("CRITICAL: Copyright text missing from frontend/src/pages/Login.tsx. The bot will not start.")
+                        os._exit(1)
+                    if "Kraftamine" not in login_content or "sumanulto" not in login_content:
+                        logger.critical("CRITICAL: Credits missing from frontend/src/pages/Login.tsx. The bot will not start.")
+                        os._exit(1)
+            else:
+                logger.warning(f"Watermark verification skipped: {login_path} not found.")
+                
+            logger.info("Watermarks verified successfully.")
+        except Exception as e:
+            logger.critical(f"CRITICAL: Failed to verify watermarks: {e}. The bot will not start.")
+            os._exit(1)
 
 bot = MusicBot()

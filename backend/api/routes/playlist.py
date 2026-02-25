@@ -242,17 +242,15 @@ async def like_track(user_id: int, track_data: dict, db: AsyncSession = Depends(
 @router.post("/check-containment")
 async def check_track_containment(request: CheckContainmentRequest, db: AsyncSession = Depends(get_db)):
     # Optimized query to search within JSON
-    # Postgres specific: Use json_extract_path_text to be safe with generic JSON type
-    # This avoids the .astext attribute error
-    from sqlalchemy import func
+    # Use SQLAlchemy JSON path operators which work across supported dialects
     stmt = (
         select(Playlist.id, PlaylistTrack.id, Playlist.name, Playlist.is_liked_songs)
         .join(PlaylistTrack, Playlist.id == PlaylistTrack.playlist_id)
         .where(
             Playlist.user_id == request.user_id,
             # Check both possible locations for URI in the JSON blob
-            (func.json_extract_path_text(PlaylistTrack.track_data, 'info', 'uri') == request.uri) | 
-            (func.json_extract_path_text(PlaylistTrack.track_data, 'uri') == request.uri)
+            (PlaylistTrack.track_data['info']['uri'].as_string() == request.uri) | 
+            (PlaylistTrack.track_data['uri'].as_string() == request.uri)
         )
     )
     

@@ -1,3 +1,4 @@
+import os
 import discord
 import wavelink
 from backend.bot import session_queue as sq
@@ -12,10 +13,13 @@ TRACKS_PER_PAGE = 7
 def _source_emoji(uri: str) -> str:
     if not uri:
         return "🎵"
+        
+    use_custom_icon = os.getenv("USE_CUSTOM_EMOJIS_ICON", "False").lower() == "true"
+    
     if "spotify" in uri:
-        return "🟢"
+        return os.getenv("EMOJI_SPOTIFY", "<:spotify:1476099462463230116>") if use_custom_icon else "🟢"
     if "youtube" in uri or "youtu.be" in uri:
-        return "🔴"
+        return os.getenv("EMOJI_YOUTUBE", "<:youtube:1476099464744800408>") if use_custom_icon else "🔴"
     if "soundcloud" in uri:
         return "🟠"
     return "🎵"
