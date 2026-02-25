@@ -359,7 +359,18 @@ EMOJI_SPOTIFY=<:spotify:1234567890>
 
 ## ⚠️ Common Issues
 
+- **Always Check Lavalink Logs First**: Most bot playback issues arise from Lavalink blockages. If a track isn't playing, check your Lavalink terminal/logs.
+- **Public Lavalink Hosts**: Using public Lavalink hosts might not work, as many do not configure YouTube bypasses clearly. Hence, most problems you will face will be with YouTube-related links. Flake Music tries to eliminate these issues in many ways, but still, many things are unsuccessful due to aggressive YouTube policies.
 - **Database Redundancy/Lag**: Ensure you only have `USE_NEON_DB=true` or `USE_MYSQL_DB=true` set, not both at the same time for normal operation.
-- **YouTube "Sign in to confirm you’re not a bot"**: You are being blocked by YouTube. Provide a `YTDLP_COOKIE_FILE` in your `.env` pointing to a valid Netscape cookies.txt file to bypass this.
+- **YouTube "Sign in to confirm you’re not a bot"**: You are being blocked by YouTube. Please use the OAuth and PoToken setup described in the Lavalink section to bypass this.
 - **WebSocket Fails on Frontend**: Ensure `VITE_WS_URL` is set correctly and `wss://` is used in production.
 - **ModuleNotFoundError: No module named backend**: Make sure you are running the backend using `uvicorn backend.main:app` from the *root* folder, with `PYTHONPATH` set to the root directory.
+
+---
+
+## 🚨 Security Warnings & Disclaimer
+
+- **Keep Your `.env` Secret**: Ensure your `.env` variables are never shared or committed publicly. If these tokens are exposed, malicious users can hijack your bot and server!
+- **Do Not Tamper**: Try not to tamper with the bot's security or token management if you are not experienced.
+- **Proper Lavalink Setup**: Please make sure to follow the Lavalink configuration guide perfectly so that external access is secure.
+- **Disclaimer**: **Kraftamine is not responsible in any terms** for server hacks, data breaches, or bot hijacking resulting from exposed `.env` files or improperly secured setups. Host at your own risk!
