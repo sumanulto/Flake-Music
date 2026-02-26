@@ -8,7 +8,7 @@
 ⭐ **If you like this bot, please consider giving it a star on GitHub! It helps a lot!** ⭐
 
 💖 **Donate**: If you want to support the ongoing development of Flake Music, you can donate at:  
-[Insert Donation Link Here - Patreon / Ko-Fi / PayPal]
+[[Ko-Fi](https://ko-fi.com/sumanulto)]
 
 </div>
 
