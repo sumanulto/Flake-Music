@@ -162,7 +162,7 @@ class Music(commands.Cog):
                                 await m.delete()
                         except:
                             pass
-                        del self.player_messages[guild.id]
+                        self.player_messages.pop(guild.id, None)
             else:
                 self.inactive_since.pop(guild.id, None)
 
