@@ -7,6 +7,39 @@ import logging
 from discord.ext import commands
 from itertools import cycle
 
+# --- MONKEY PATCH WAVELINK FOR LAVALINK V4 ---
+# Lavalink V4 requires 'channelId' in the voice state update payload
+import wavelink.player
+from wavelink.exceptions import LavalinkException
+
+async def _patched_dispatch_voice_update(self):
+    assert self.guild is not None
+    data = self._voice_state["voice"]
+
+    session_id = data.get("session_id", None)
+    token = data.get("token", None)
+    endpoint = data.get("endpoint", None)
+
+    if not session_id or not token or not endpoint:
+        return
+
+    channel_id = str(self.channel.id) if self.channel else None
+    request = {"voice": {"sessionId": session_id, "token": token, "endpoint": endpoint}}
+    if channel_id:
+        request["voice"]["channelId"] = channel_id
+
+    try:
+        await self.node._update_player(self.guild.id, data=request)
+    except LavalinkException:
+        await self.disconnect()
+    else:
+        self._connection_event.set()
+
+    logging.getLogger("wavelink.player").debug("Player %s is dispatching VOICE_UPDATE (patched for Lavalink v4).", self.guild.id)
+
+wavelink.player.Player._dispatch_voice_update = _patched_dispatch_voice_update
+# ---------------------------------------------
+
 logger = logging.getLogger(__name__)
 
 class MusicBot(commands.Bot):
@@ -89,7 +122,7 @@ class MusicBot(commands.Bot):
         lavalink_password = os.getenv("LAVALINK_PASSWORD", "youshallnotpass")
         lavalink_uri = f"http://{lavalink_host}:{lavalink_port}"
         
-        nodes = [wavelink.Node(uri=lavalink_uri, password=lavalink_password)]
+        nodes = [wavelink.Node(uri=lavalink_uri, password=lavalink_password, resume_timeout=60)]
         await wavelink.Pool.connect(nodes=nodes, client=self, cache_capacity=100)
 
     async def on_ready(self):

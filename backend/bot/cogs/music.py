@@ -3,7 +3,7 @@ import wavelink
 import logging
 import os
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 from typing import cast, Dict, Optional
 from backend.bot.cogs.views.music_view import MusicView
 from backend.bot.cogs.views.queue_view import QueueView
@@ -21,6 +21,7 @@ class Music(commands.Cog):
         
         # Reference to companion listener bot (set if VOICE_MODULE_ENABLED)
         self.listener_bot = None
+        self.inactive_since: Dict[int, float] = {}
 
     async def _handle_voice_command(self, guild_id: int, text_channel_id: int, user_id: int, command_text: str):
         """Callback for the Voice Module when 'Hey Flake ...' is detected"""
@@ -122,8 +123,59 @@ class Music(commands.Cog):
                  await channel.send(f"🎙️ **Voice Command:** {state} track.", delete_after=5)
                  await self.refresh_player_interface(guild_id, force_new=False)
 
+    @tasks.loop(seconds=10.0)
+    async def auto_disconnect_task(self):
+        import time
+        now = time.time()
+        for guild in self.bot.guilds:
+            player: wavelink.Player = cast(wavelink.Player, guild.voice_client)
+            if getattr(player, "channel", None) is None:
+                self.inactive_since.pop(guild.id, None)
+                continue
+                
+            # Check if alone in voice channel (excluding bots)
+            members = player.channel.members
+            non_bots = [m for m in members if not m.bot]
+            is_empty = len(non_bots) == 0
+            
+            is_idle = not player.playing and not player.paused
+            
+            if is_empty or is_idle:
+                if guild.id not in self.inactive_since:
+                    self.inactive_since[guild.id] = now
+                elif now - self.inactive_since[guild.id] >= 60.0:  # 1 minute
+                    # Disconnect
+                    logger.info(f"Auto-disconnecting from guild {guild.id} due to inactivity/empty channel.")
+                    player.queue.clear()
+                    sq.clear(guild.id)
+                    await player.stop()
+                    await player.disconnect()
+                    self.inactive_since.pop(guild.id, None)
+                    
+                    if guild.id in self.player_messages:
+                        try:
+                            cid, mid = self.player_messages[guild.id]
+                            ch = self.bot.get_channel(cid)
+                            if ch:
+                                await ch.send("Disconnected due to 1 minute of inactivity.", delete_after=10)
+                                m = await ch.fetch_message(mid)
+                                await m.delete()
+                        except:
+                            pass
+                        del self.player_messages[guild.id]
+            else:
+                self.inactive_since.pop(guild.id, None)
+
+    @auto_disconnect_task.before_loop
+    async def before_auto_disconnect_task(self):
+        await self.bot.wait_until_ready()
+
     async def cog_load(self):
         logger.info("Music Cog loaded")
+        self.auto_disconnect_task.start()
+
+    async def cog_unload(self):
+        self.auto_disconnect_task.cancel()
 
     async def update_player_message(self, guild_id: int):
         """
@@ -198,6 +250,11 @@ class Music(commands.Cog):
         if not hasattr(self, 'guild_contexts'):
             self.guild_contexts = {}
         self.guild_contexts[interaction.guild.id] = interaction.channel.id
+
+        # Clean off Lavalink prefixes so our yt-dlp and fallback logic can handle it purely
+        for prefix in ["ytmsearch:", "ytsearch:", "scsearch:"]:
+            if query.startswith(prefix):
+                query = query[len(prefix):]
 
         await interaction.response.defer()
 
@@ -288,19 +345,43 @@ class Music(commands.Cog):
              else:
                  await interaction.followup.send("Failed to fetch information from YouTube. URL might be private.", ephemeral=True)
                  return
-        else:
-             if not query.startswith(("http://", "https://", "ytsearch:", "ytmsearch:", "scsearch:")):
-                 query = f"ytmsearch:{query}"
+        # Clean up accidental double-prefixes from autocomplete
+        if query.startswith("ytmsearch:ytmsearch:"):
+            query = query.replace("ytmsearch:", "", 1)
+        if query.startswith("ytsearch:ytsearch:"):
+            query = query.replace("ytsearch:", "", 1)
 
-        try:
-            tracks: wavelink.Search = await wavelink.Playable.search(query)
-        except Exception as e:
-            await interaction.followup.send("Could not find any tracks.", ephemeral=True)
-            return
+        if not query.startswith(("http://", "https://", "ytsearch:", "ytmsearch:", "scsearch:")):
+            queries_to_try = [f"ytsearch:{query}", f"ytmsearch:{query}"]
+        else:
+            queries_to_try = [query]
+            
+            # If they provided a raw youtube URL but Lavalink fails to load it (due to block or sign-in),
+            # we should immediately fallback to searching its title/artist via ytsearch instead.
+            # But here we just have the raw string, so we'll just try to search it directly first.
+
+        tracks = None
+        for try_query in queries_to_try:
+            try:
+                tracks = await wavelink.Playable.search(try_query)
+                if tracks:
+                    break # Found something!
+            except Exception as e:
+                logger.warning(f"Failed to search '{try_query}' in /play: {e}")
+                continue
 
         if not tracks:
-            await interaction.followup.send("No tracks found.", ephemeral=True)
-            return
+            # Final fallback: if it's a direct link that failed, try searching it as text
+            if query.startswith(("http://", "https://")):
+                 try:
+                     clean_query = query.split('&')[0] # remove playlist data just in case
+                     tracks = await wavelink.Playable.search(f"ytsearch:{clean_query}")
+                 except:
+                     pass
+                     
+            if not tracks:
+                await interaction.followup.send("No tracks found or Lavalink blocked the request.", ephemeral=True)
+                return
 
         # Track loading
         track = None
@@ -332,6 +413,49 @@ class Music(commands.Cog):
         if was_playing:
              await self.refresh_player_interface(interaction.guild.id, force_new=False)
 
+    _autocomplete_cache = {}
+
+    @play.autocomplete("query")
+    async def play_autocomplete(self, interaction: discord.Interaction, current: str):
+        if not current or len(current) < 3:
+            return []
+            
+        current_lower = current.lower()
+        import time
+        
+        # Simple cache expiration (5 minutes)
+        if hasattr(self, '_autocomplete_cache') and current_lower in self._autocomplete_cache:
+            cache_time, cached_choices = self._autocomplete_cache[current_lower]
+            if time.time() - cache_time < 300:
+                return cached_choices
+                
+        try:
+            tracks = await wavelink.Playable.search(f"ytmsearch:{current}")
+            if not tracks:
+                return []
+            
+            track_list = tracks.tracks if isinstance(tracks, wavelink.Playlist) else tracks
+            
+            choices = []
+            seen = set()
+            for track in track_list:
+                name = f"{track.title[:60]} - {track.author[:30]}"
+                if name not in seen:
+                    seen.add(name)
+                    # use URI if it fits in 100 chars, else use the name itself
+                    val = track.uri if track.uri and len(track.uri) <= 100 else name
+                    choices.append(app_commands.Choice(name=name, value=val))
+                if len(choices) >= 25:
+                    break
+                    
+            if not hasattr(self, '_autocomplete_cache'):
+                self._autocomplete_cache = {}
+            self._autocomplete_cache[current_lower] = (time.time(), choices)
+            return choices
+        except Exception as e:
+            logger.error(f"Autocomplete error in /play: {e}")
+            return []
+
     # ---------------------------------------------------------------------- #
     # Internal helper: resolve a TrackInfo and play it immediately            #
     # Lavalink's player.queue is NEVER used for routing — only for playing    #
@@ -347,8 +471,26 @@ class Music(commands.Cog):
                         or it would swallow the next natural 'finished' event.
         """
         try:
-            search_q = f"ytmsearch:{track_info.title} {track_info.author}"
-            found = await wavelink.Playable.search(search_q)
+            found = None
+            if track_info.encoded:
+                # If we saved the base64 encoded track from lavalink, try to decode and play it directly
+                try:
+                    found = await wavelink.Playable.search(track_info.encoded)
+                except Exception:
+                    pass
+            
+            if not found and track_info.uri:
+                 # Search by exact URI
+                 try:
+                     found = await wavelink.Playable.search(track_info.uri)
+                 except Exception:
+                     pass
+                     
+            if not found:
+                # Fallback to search
+                search_q = f"ytmsearch:{track_info.title} {track_info.author}"
+                found = await wavelink.Playable.search(search_q)
+                
             if not found:
                 logger.warning(f"Session track not found: {track_info.title}")
                 # Skip to next automatically
@@ -417,7 +559,8 @@ class Music(commands.Cog):
             
             session = sq.get(guild_id)
             remaining = max(0, len(session.tracks) - session.current_index - 1)
-            embed.add_field(name="Queue Length", value=f"{remaining} Tracks", inline=False)
+            autoplay_str = " (Autoplay ON)" if session.autoplay_enabled else ""
+            embed.add_field(name="Queue Length", value=f"{remaining} Tracks{autoplay_str}", inline=False)
             
             if track.artwork:
                 embed.set_thumbnail(url=track.artwork)
@@ -572,6 +715,17 @@ class Music(commands.Cog):
         await player.set_filters(filters)
         await interaction.response.send_message(f"Applied filter: **{preset.name}**", ephemeral=True)
 
+    @app_commands.command(name="autoplay", description="Toggle autoplay (automatically play related songs when queue ends)")
+    async def autoplay(self, interaction: discord.Interaction):
+        if not interaction.guild:
+            return
+
+        session = sq.get(interaction.guild.id)
+        session.autoplay_enabled = not session.autoplay_enabled
+        
+        state = "enabled" if session.autoplay_enabled else "disabled"
+        await interaction.response.send_message(f"Autoplay is now **{state}**.", ephemeral=False)
+
     @app_commands.command(name="queue", description="Show the music queue")
     async def queue(self, interaction: discord.Interaction):
         if not interaction.guild:
@@ -666,8 +820,126 @@ class Music(commands.Cog):
                 # is_manual=False: no track is being interrupted, so don't set
                 # _session_navigating (that flag is only for user-initiated skips).
                 await self._play_session_track(player, next_track, is_manual=False)
+            elif session.autoplay_enabled and session.current:
+                # End of queue, but autoplay is enabled. Fetch recommended track.
+                last_track = session.current
+                try:
+                    next_wl_track = None
+                    valid_choices = []
+                    
+                    import os
+                    import aiohttp
+                    import re
+                    import random
+                    import urllib.parse
+                    
+                    last_fm_api_key = os.getenv("LASTFM_API_KEY")
+                    
+                    # Clean the title for better Last.fm matching (remove (Official Video), [Remix], etc)
+                    clean_title = re.sub(r'[\[\(].*?[\]\)]|-.*|Official.*|Video.*|Audio.*|Lyrics.*', '', last_track.title).strip()
+                    clean_author = re.sub(r'VEVO|Official|Topic', '', last_track.author, flags=re.IGNORECASE).strip()
+
+                    # Try Last.fm first if API key is present
+                    if last_fm_api_key and not next_wl_track:
+                        url = f"http://ws.audioscrobbler.com/2.0/?method=track.getsimilar&artist={urllib.parse.quote_plus(clean_author)}&track={urllib.parse.quote_plus(clean_title)}&api_key={last_fm_api_key}&format=json&limit=15"
+                        try:
+                            async with aiohttp.ClientSession() as http_session:
+                                # Add user-agent to prevent 403s on AudioScrobbler
+                                headers = {'User-Agent': 'FlakeMusicBot/1.0'}
+                                async with http_session.get(url, headers=headers) as response:
+                                    if response.status == 200:
+                                        data = await response.json()
+                                        similar_tracks = data.get('similartracks', {}).get('track', [])
+                                        
+                                        if similar_tracks:
+                                            # We have Last.fm recommendations!
+                                            random.shuffle(similar_tracks) # Mix them up
+                                            existing_titles = {t.title.lower() for t in session.tracks}
+                                            
+                                            for sim_track in similar_tracks:
+                                                sim_title = sim_track.get('name')
+                                                sim_artist = sim_track.get('artist', {}).get('name')
+                                                
+                                                # Ensure both are present and not already played
+                                                if sim_title and sim_artist and sim_title.lower() not in existing_titles:
+                                                    # Try to resolve this specific track via Lavalink
+                                                    # Last.fm returns very specific artist names that sometimes trip up YouTube search.
+                                                    # We'll try ytsearch (standard youtube, usually best for exact title+artist), then ytmsearch.
+                                                    
+                                                    queries_to_try = [
+                                                        f"ytsearch:{sim_title} {sim_artist}",
+                                                        f"ytmsearch:{sim_title} {sim_artist}",
+                                                        f"ytsearch:{sim_title} Official Audio",
+                                                    ]
+                                                    
+                                                    found_valid = False
+                                                    for query in queries_to_try:
+                                                        try:
+                                                            found = await wavelink.Playable.search(query)
+                                                            if found:
+                                                                track_list = found.tracks if isinstance(found, wavelink.Playlist) else found
+                                                                if track_list:
+                                                                    next_wl_track = track_list[0]
+                                                                    logger.info(f"Last.fm chose: {sim_title} by {sim_artist} (Found via {query.split(':')[0]})")
+                                                                    found_valid = True
+                                                                    break
+                                                        except Exception as search_e:
+                                                            logger.warning(f"Lavalink search failed for '{query}': {search_e}")
+                                                            continue
+                                                    
+                                                    if found_valid:
+                                                        break # Break the outer Last.fm similar tracks loop since we found a song!
+                                    else:
+                                        logger.error(f"Last.fm API returned status {response.status}")
+                        except Exception as e:
+                            logger.error(f"Last.fm API fetch failed: {e}")
+
+                    # Fallback to Wavelink Mix-based querying if Last.fm fails or is unavailable
+                    if not next_wl_track:
+                        query = f"ytmsearch:{clean_title} {clean_author} mix"
+                        found = await wavelink.Playable.search(query)
+                        
+                        if not found:
+                            query = f"ytmsearch:{clean_author} top tracks"
+                            found = await wavelink.Playable.search(query)
+    
+                        if found:
+                            track_list = found.tracks if isinstance(found, wavelink.Playlist) else found
+                            choices = track_list[1:12] if len(track_list) > 1 else track_list
+                            
+                            existing_uris = {t.uri for t in session.tracks}
+                            valid_choices = [t for t in choices if t.uri not in existing_uris]
+                            
+                            if not valid_choices and choices:
+                                 valid_choices = choices
+                                 
+                            next_wl_track = random.choice(valid_choices) if valid_choices else choices[0]
+
+                    if next_wl_track:
+                        # Add to session and play
+                        next_wl_track.requester = player.client.user.id # Bot requested it
+                        sq_track = sq.from_wavelink_track(next_wl_track)
+                        session.add(sq_track)
+                        
+                        # Advance session to this newly added track
+                        session.set_index(session.current_index + 1)
+                        await self._play_session_track(player, session.current, is_manual=False)
+                        
+                        # Send a message to the channel saying autoplay added a song
+                        if guild_id in self.guild_contexts:
+                            channel = self.bot.get_channel(self.guild_contexts[guild_id])
+                            if channel:
+                                await channel.send(f"📻 **Autoplay** added: **{next_wl_track.title}**", delete_after=15)
+                                
+                        # Crucial: Refresh the UI to reflect the new track and the "Auto" state
+                        await self.refresh_player_interface(guild_id, force_new=False)
+                    else:
+                        await self.refresh_player_interface(guild_id, force_new=False)
+                except Exception as e:
+                    logger.error(f"Autoplay failed to find next track: {e}")
+                    await self.refresh_player_interface(guild_id, force_new=False)
             else:
-                # End of queue
+                # End of queue and no autoplay
                 await self.refresh_player_interface(guild_id, force_new=False)
         # 'stopped' / 'replaced' without flag = ignore (bot was stopped or external force)
 

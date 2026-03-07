@@ -68,6 +68,10 @@ class PlaylistCog(commands.Cog):
 
         await interaction.response.defer(ephemeral=True)
 
+        for prefix in ["ytmsearch:", "ytsearch:", "scsearch:"]:
+            if query.startswith(prefix):
+                query = query[len(prefix):]
+
         # YouTube Fallback Logic (Reuse from music.py)
         from backend.utils.youtube import extract_info
         
@@ -85,19 +89,36 @@ class PlaylistCog(commands.Cog):
              else:
                  await interaction.followup.send("Failed to fetch information from YouTube. URL might be private.")
                  return
+        if query.startswith("ytmsearch:ytmsearch:"):
+            query = query.replace("ytmsearch:", "", 1)
+        if query.startswith("ytsearch:ytsearch:"):
+            query = query.replace("ytsearch:", "", 1)
+            
+        if not query.startswith(("http://", "https://", "ytsearch:", "ytmsearch:", "scsearch:")):
+            queries_to_try = [f"ytsearch:{query}", f"ytmsearch:{query}"]
         else:
-             if not query.startswith(("http://", "https://", "ytsearch:", "ytmsearch:", "scsearch:")):
-                 query = f"ytmsearch:{query}"
-
-        # Search Track
-        try:
-            tracks: wavelink.Search = await wavelink.Playable.search(query)
-        except Exception:
-            await interaction.followup.send("Could not find track.")
-            return
+            queries_to_try = [query]
+            
+        tracks = None
+        for try_query in queries_to_try:
+            try:
+                tracks = await wavelink.Playable.search(try_query)
+                if tracks:
+                    break
+            except Exception:
+                continue
 
         if not tracks:
-            await interaction.followup.send("No tracks found.")
+            if query.startswith(("http://", "https://")):
+                 try:
+                     clean_query = query.split('&')[0]
+                     tracks = await wavelink.Playable.search(f"ytsearch:{clean_query}")
+                 except:
+                     pass
+                     
+            if not tracks:
+                await interaction.followup.send("No tracks found or Lavalink blocked the request.")
+                return
             return
 
         idx = 0
@@ -147,6 +168,48 @@ class PlaylistCog(commands.Cog):
             stmt = select(Playlist.name).where(Playlist.user_id == interaction.user.id, Playlist.name.ilike(f"%{current}%")).limit(25)
             playlists = (await session.execute(stmt)).scalars().all()
         return [app_commands.Choice(name=p, value=p) for p in playlists]
+
+    _autocomplete_cache = {}
+
+    @add.autocomplete("query")
+    async def add_query_autocomplete(self, interaction: discord.Interaction, current: str):
+        if not current or len(current) < 3:
+            return []
+            
+        current_lower = current.lower()
+        import time
+        
+        # Simple cache expiration (5 minutes)
+        if hasattr(self, '_autocomplete_cache') and current_lower in self._autocomplete_cache:
+            cache_time, cached_choices = self._autocomplete_cache[current_lower]
+            if time.time() - cache_time < 300:
+                return cached_choices
+                
+        try:
+            tracks = await wavelink.Playable.search(f"ytmsearch:{current}")
+            if not tracks:
+                return []
+            
+            track_list = tracks.tracks if isinstance(tracks, wavelink.Playlist) else tracks
+            
+            choices = []
+            seen = set()
+            for track in track_list:
+                name = f"{track.title[:60]} - {track.author[:30]}"
+                if name not in seen:
+                    seen.add(name)
+                    # use URI if it fits in 100 chars, else use the name itself
+                    val = track.uri if track.uri and len(track.uri) <= 100 else name
+                    choices.append(app_commands.Choice(name=name, value=val))
+                if len(choices) >= 25:
+                    break
+                    
+            if not hasattr(self, '_autocomplete_cache'):
+                self._autocomplete_cache = {}
+            self._autocomplete_cache[current_lower] = (time.time(), choices)
+            return choices
+        except Exception:
+            return []
 
     @playlist_group.command(name="play", description="Play a playlist")
     @app_commands.describe(name="The playlist to play")

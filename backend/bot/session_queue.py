@@ -46,6 +46,7 @@ class GuildSession:
     current_index: int = -1
     repeat_mode: Literal["off", "one", "all"] = "off"
     shuffle_enabled: bool = False
+    autoplay_enabled: bool = False
     # Original track order (preserved when shuffle is toggled)
     _original_tracks: list[TrackInfo] = field(default_factory=list)
 
@@ -131,6 +132,7 @@ class GuildSession:
         self.current_index = -1
         self.repeat_mode = "off"
         self.shuffle_enabled = False
+        self.autoplay_enabled = False
 
     def to_api(self) -> dict:
         return {

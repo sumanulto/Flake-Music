@@ -47,6 +47,15 @@ class MusicView(discord.ui.View):
         like_btn.callback = self.like_action
         self.add_item(like_btn)
 
+        autoplay_btn = discord.ui.Button(
+            label="Auto ▶️",
+            style=discord.ButtonStyle.secondary,
+            custom_id="autoplay_btn",
+            row=2,
+        )
+        autoplay_btn.callback = self.autoplay_action
+        self.add_item(autoplay_btn)
+
         self.update_buttons()
 
     # ------------------------------------------------------------------ #
@@ -91,6 +100,14 @@ class MusicView(discord.ui.View):
         if shuf_btn and session:
             shuf_btn.style = (
                 discord.ButtonStyle.success if session.shuffle_enabled
+                else discord.ButtonStyle.secondary
+            )
+
+        # Autoplay — highlight when enabled
+        autoplay_btn = next((x for x in self.children if getattr(x, "custom_id", None) == "autoplay_btn"), None)
+        if autoplay_btn and session:
+            autoplay_btn.style = (
+                discord.ButtonStyle.success if session.autoplay_enabled
                 else discord.ButtonStyle.secondary
             )
 
@@ -294,3 +311,23 @@ class MusicView(discord.ui.View):
             await session.commit()
 
             await interaction.followup.send(f"Added **{track.title}** to Liked Songs ❤️", ephemeral=True)
+
+    async def autoplay_action(self, interaction: discord.Interaction):
+        if not self.player:
+            return await interaction.response.defer()
+            
+        session = self._session()
+        if not session:
+            return await interaction.response.defer()
+            
+        await interaction.response.defer()
+        session.autoplay_enabled = not session.autoplay_enabled
+        self.update_buttons()
+        
+        if self.music_cog:
+            await self.music_cog.refresh_player_interface(self.player.guild.id, force_new=False)
+        else:
+            try:
+                await interaction.message.edit(view=self)
+            except Exception:
+                pass
